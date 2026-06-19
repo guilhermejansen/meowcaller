@@ -38,7 +38,7 @@ var (
 // LoadSmplMem decodes the embedded heap blob once and returns the shared,
 // read-only window.
 func LoadSmplMem() *SmplMem {
-	// Source of truth: whatsapp-rust-voip wacore/src/voip/mlow/smpl_mem.rs::load_smpl_mem
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_mem.rs#L24-L58
 	smplMemOnce.Do(func() {
 		var raw struct {
 			Regions []struct {
@@ -74,7 +74,7 @@ func LoadSmplMem() *SmplMem {
 // regionFor returns the region data containing [addr, addr+n) and the byte offset
 // of addr within it. ok is false when no region covers the range.
 func (m *SmplMem) regionFor(addr uint32, n int) (data []byte, off int, ok bool) {
-	// Source of truth: whatsapp-rust-voip wacore/src/voip/mlow/smpl_mem.rs::SmplMem::region_for
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_mem.rs#L62-L69
 	for _, r := range m.regions {
 		if addr >= r.base && int(addr-r.base)+n <= len(r.data) {
 			return r.data, int(addr - r.base), true
@@ -85,7 +85,7 @@ func (m *SmplMem) regionFor(addr uint32, n int) (data []byte, off int, ok bool) 
 
 // U8 reads one byte at addr, or 0 if addr is outside every region.
 func (m *SmplMem) U8(addr uint32) uint8 {
-	// Source of truth: whatsapp-rust-voip wacore/src/voip/mlow/smpl_mem.rs::SmplMem::u8
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_mem.rs#L71-L73
 	if data, off, ok := m.regionFor(addr, 1); ok {
 		return data[off]
 	}
@@ -94,7 +94,7 @@ func (m *SmplMem) U8(addr uint32) uint8 {
 
 // U16 reads a little-endian uint16 at addr, or 0 if out of region.
 func (m *SmplMem) U16(addr uint32) uint16 {
-	// Source of truth: whatsapp-rust-voip wacore/src/voip/mlow/smpl_mem.rs::SmplMem::u16
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_mem.rs#L75-L78
 	if data, off, ok := m.regionFor(addr, 2); ok {
 		return binary.LittleEndian.Uint16(data[off:])
 	}
@@ -103,13 +103,13 @@ func (m *SmplMem) U16(addr uint32) uint16 {
 
 // I16 is the signed reinterpretation of U16.
 func (m *SmplMem) I16(addr uint32) int16 {
-	// Source of truth: whatsapp-rust-voip wacore/src/voip/mlow/smpl_mem.rs::SmplMem::i16
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_mem.rs#L80-L82
 	return int16(m.U16(addr))
 }
 
 // U32 reads a little-endian uint32 at addr, or 0 if out of region.
 func (m *SmplMem) U32(addr uint32) uint32 {
-	// Source of truth: whatsapp-rust-voip wacore/src/voip/mlow/smpl_mem.rs::SmplMem::u32
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_mem.rs#L84-L88
 	if data, off, ok := m.regionFor(addr, 4); ok {
 		return binary.LittleEndian.Uint32(data[off:])
 	}
@@ -118,14 +118,14 @@ func (m *SmplMem) U32(addr uint32) uint32 {
 
 // I32 is the signed reinterpretation of U32.
 func (m *SmplMem) I32(addr uint32) int32 {
-	// Source of truth: whatsapp-rust-voip wacore/src/voip/mlow/smpl_mem.rs::SmplMem::i32
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_mem.rs#L90-L92
 	return int32(m.U32(addr))
 }
 
 // CDFAt materializes the n-entry cumulative uint16 CDF at addr; entries outside
 // the window read as 0.
 func (m *SmplMem) CDFAt(addr uint32, n int) []uint16 {
-	// Source of truth: whatsapp-rust-voip wacore/src/voip/mlow/smpl_mem.rs::SmplMem::cdf_at
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_mem.rs#L96-L100
 	out := make([]uint16, n)
 	for i := range n {
 		out[i] = m.U16(addr + uint32(i)*2)
@@ -136,7 +136,7 @@ func (m *SmplMem) CDFAt(addr uint32, n int) []uint16 {
 // silkLSFCosTabFIXQ12 is the Q12 cosine approximation table (129 entries,
 // symmetric around index 64) for the LSF root search.
 //
-// Source of truth: whatsapp-rust-voip wacore/src/voip/mlow/silk_lsf_cos_tab.rs::SILK_LSF_COS_TAB_FIX_Q12
+// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/silk_lsf_cos_tab.rs#L4-L22
 var silkLSFCosTabFIXQ12 = [129]int32{
 	8192, 8190, 8182, 8170, 8152, 8130, 8104, 8072,
 	8034, 7994, 7946, 7896, 7840, 7778, 7714, 7644,

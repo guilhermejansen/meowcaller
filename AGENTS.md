@@ -77,7 +77,7 @@ body uses the **three-line stub block**:
 ```go
 // SealFrame encrypts one media frame with the participant SFrame key.
 func (s *Session) SealFrame(plaintext []byte) ([]byte, error) {
-	// Source of truth: whatsapp-rust-voip wacore/src/voip/srtp/sframe.rs::Session::seal_frame
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/<sha>/wacore/src/voip/srtp/sframe.rs#L<start>-L<end>
 	// TODO
 	// agent suggestion: AES-GCM with a 16-byte LE-counter nonce; authenticate the
 	// varint header as AAD.
@@ -114,9 +114,10 @@ skips with a clear reason) until the body lands — never a fake pass.
 Comments earn their place or they do not exist:
 
 - **`// Source of truth: ...`** — required as the first line of every function
-  body. It names the reference symbol the function ports, so a reader can find the
-  ground truth. For now that is the Rust reference, as a repo + path + symbol:
-  `whatsapp-rust-voip wacore/src/voip/mlow/rangecoder.rs::RangeDecoder::decode_cdf`.
+  body. It is a **GitHub permalink** to the exact reference lines the function
+  ports, so a reader can jump straight to the ground truth. For now that is the
+  Rust reference, pinned to a commit SHA with the function's line range:
+  `https://github.com/oxidezap/whatsapp-rust/blob/<sha>/wacore/src/voip/mlow/rangecoder.rs#L203-L226`.
   Later, when a specific logic branch has a wacrg decision artifact, its link goes
   in this same slot (a second `// Source of truth:` line at that branch). This is
   the one place the reference may be named in code.
