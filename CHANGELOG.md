@@ -7,6 +7,14 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### mlow/mem
+- scaffolded: SmplMem type + LoadSmplMem/regionFor/U8/U16/I16/U32/I32/CDFAt
+  signatures with TODO bodies; cosine table (silkLSFCosTabFIXQ12, 129 entries)
+  transcribed verbatim. Data blobs smpl_cc_blob.json + smpl_tables.json copied to
+  testdata. Tests: load/pointer + accessor-semantics + cosine transcription (fail
+  until implemented); byte-exact CDF KAT skipped — mem has no direct vector in the
+  reference, so smpl_tables.json is verified transitively by the decode modules.
+
 ### mlow/rangecoder
 - KAT-verified: decoder replays the 2000-op and 1500-op CDF scripts to the listed
   values; encoder re-encodes both byte-identically to rc_vectors.json (4/4 tests).
