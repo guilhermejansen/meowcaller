@@ -17,10 +17,11 @@ doing anything:
    a module only from its datasheet.
 5. **[`GLOSSARY.md`](GLOSSARY.md)** — every acronym/term used in the datasheets.
 
-Non-negotiables: the Go code never names or imports any reference library (only a
-plain URL to the spec/decision repo is allowed in a comment); commits are
-`(<module>: <change>)` and update `CHANGELOG.md`; commit but do not push; no real
-PII in tests. Scope is 1:1 calls.
+Non-negotiables: the Go never imports or copies a reference library (it stays an
+independent implementation), but every function carries a `// Source of truth:`
+comment citing the reference symbol it ports — see `AGENTS.md` Comment policy;
+commits are `(<module>: <change>)` and update `CHANGELOG.md`; commit but do not
+push; no real PII in tests. Scope is 1:1 calls.
 
 If you are about to write a function body that involves a real engineering choice,
 **stop and ask** instead. Scaffold, explain in chat, and let the human decide.

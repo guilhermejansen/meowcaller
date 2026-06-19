@@ -69,13 +69,15 @@ steps without approval.
 ## Scaffolding standard
 
 A scaffold is a complete, compiling skeleton with no logic. The doc comment is a
-normal, brief Go doc comment; there is **no** provenance/spec reference in the
-code (that was already said in the conversation). Every unfinished body uses the
-**three-line stub block**:
+normal, brief Go doc comment. The **first line of every function body** is a
+`// Source of truth:` comment pointing at the reference symbol the function ports;
+this is required, not optional (see Comment policy). Below it, every unfinished
+body uses the **three-line stub block**:
 
 ```go
 // SealFrame encrypts one media frame with the participant SFrame key.
 func (s *Session) SealFrame(plaintext []byte) ([]byte, error) {
+	// Source of truth: whatsapp-rust-voip wacore/src/voip/srtp/sframe.rs::Session::seal_frame
 	// TODO
 	// agent suggestion: AES-GCM with a 16-byte LE-counter nonce; authenticate the
 	// varint header as AAD.
@@ -101,8 +103,8 @@ from `sframe.rs`, it's AES-GCM, and my suggestion is the 16-byte LE-counter nonc
 with the varint header as AAD." The chat carries the why; the stub carries the
 suggestion and the slot for the human's answer.
 
-All three lines are stripped when the body lands — the implemented code stays
-clean, with no `TODO`/suggestion/input residue.
+The three stub lines are stripped when the body lands; the `// Source of truth:`
+line **stays** — it is permanent provenance, not scaffolding.
 
 It must `go build` and `go vet` cleanly. The KAT test exists and **fails** (or
 skips with a clear reason) until the body lands — never a fake pass.
@@ -111,6 +113,13 @@ skips with a clear reason) until the body lands — never a fake pass.
 
 Comments earn their place or they do not exist:
 
+- **`// Source of truth: ...`** — required as the first line of every function
+  body. It names the reference symbol the function ports, so a reader can find the
+  ground truth. For now that is the Rust reference, as a repo + path + symbol:
+  `whatsapp-rust-voip wacore/src/voip/mlow/rangecoder.rs::RangeDecoder::decode_cdf`.
+  Later, when a specific logic branch has a wacrg decision artifact, its link goes
+  in this same slot (a second `// Source of truth:` line at that branch). This is
+  the one place the reference may be named in code.
 - **The three-line stub block** (`// TODO` / `// agent suggestion: ...` /
   `// human input:`) — an unfinished body, per the scaffolding standard above. The
   three lines exist only while the body is a stub and are removed when it lands.
@@ -120,8 +129,8 @@ Comments earn their place or they do not exist:
   non-obvious context (a magic constant's origin, a byte-order quirk, a deviation
   from the reference and why).
 - **Doc comments** on exported identifiers, per Go convention — a brief statement
-  of what it is. **No** spec/ref/KAT provenance lines in code; that belongs in the
-  conversation and the datasheet, not in comments the human must read.
+  of what it is. Keep KAT/validation detail in the conversation and datasheet, not
+  in doc comments.
 
 Do **not** narrate what the code plainly does, and do **not** use comments to
 explain *why* — say the why out loud. Clean code is the default; comments are the
@@ -177,6 +186,9 @@ before proceeding. None of this lives in code comments.
 - No filling a function body with a guess to avoid stopping.
 - No "it compiles, ship it" — green KAT or it is not done.
 - No silently copying logic whose meaning you cannot explain.
-- No naming or alluding to the reference library anywhere in the Go code.
+- No importing or copying the reference library — the Go stays an independent
+  implementation. Naming it is now expected: every function carries a
+  `// Source of truth:` provenance comment, and the reference may be cited there
+  (and only there, plus `// ASSUMPTION`/context notes that need it).
 - No writing a decision artifact (ADR) without the human's direction.
 - No reuse of the old dublin/meowmeow calling code as a source.
