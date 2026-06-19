@@ -4,6 +4,9 @@ This library is built **module by module, under human audit, in real time**. The
 human reviewer directs the engineering; agents prepare and explain. This file is
 the working protocol. It is binding.
 
+Unfamiliar with a term or acronym (TOC, KAT, SID, VAD, LTP, NLSF, PVQ, SRTP,
+SFrame, WARP, …)? See [`GLOSSARY.md`](GLOSSARY.md).
+
 > If you are an agent reading this: you are not autonomous here. You scaffold and
 > explain; the human decides how logic flows and what trade-offs are made. When in
 > doubt, stop and ask. A wrong guess committed quietly is the worst outcome.

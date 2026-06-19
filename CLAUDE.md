@@ -15,6 +15,7 @@ doing anything:
 4. **[`datasheets/`](datasheets/)** — one datasheet per module. Each has the
    reference source verbatim, the Go envelope (signatures), and suggestions. Build
    a module only from its datasheet.
+5. **[`GLOSSARY.md`](GLOSSARY.md)** — every acronym/term used in the datasheets.
 
 Non-negotiables: the Go code never names or imports any reference library (only a
 plain URL to the spec/decision repo is allowed in a comment); commits are
