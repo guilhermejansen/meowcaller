@@ -19,3 +19,38 @@ message Region {
   uint32 base = 1;
   bytes data = 2;
 }
+
+// The MLow per-frame LSF runtime CDF tables (func 3559 output, the lsf_* fields
+// of the smpl_tables JSON dump). Stored zlib-compressed protobuf so the Rust
+// reference and the Go port decode the byte-identical blob. u16 CDF entries are
+// widened to uint32 on the wire (protobuf has no u16) and narrowed back on load.
+message SmplLsfTables {
+  repeated Cdf lsf_sel = 1;             // [sel] -> CDF
+  LsfGrid lsf_grid = 2;
+  repeated LsfStage2S1 lsf_stage2 = 3;  // [stage1]
+  repeated uint32 lsf_extra = 4;        // the 3-symbol extra CDF
+}
+
+// One u16 cumulative CDF.
+message Cdf {
+  repeated uint32 v = 1;
+}
+
+// The four stage-1 grid CDFs, selected by (match, stage1 != 0).
+message LsfGrid {
+  repeated uint32 match1 = 1;
+  repeated uint32 match1_alt = 2;
+  repeated uint32 match0 = 3;
+  repeated uint32 match0_alt = 4;
+}
+
+// lsf_stage2 nesting: [stage1][config][grid][coeff] -> CDF.
+message LsfStage2S1 {
+  repeated LsfStage2S2 config = 1;
+}
+message LsfStage2S2 {
+  repeated LsfStage2S3 grid = 1;
+}
+message LsfStage2S3 {
+  repeated Cdf coeff = 1;
+}

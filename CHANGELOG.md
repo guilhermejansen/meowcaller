@@ -7,6 +7,25 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### mlow/lsf — scaffold + protobuf LSF table asset (reference `c697c36`)
+- **Reference change (pushed):** `refactor(voip): store the smpl LSF tables as
+  protobuf` (`c697c36` on `feat/voip-media-stack`). Re-encoded the reference's
+  `smpl_tables.bin` from zlib+postcard to zlib+protobuf (`tables.proto`
+  `SmplLsfTables`), mirroring the cc_blob, so the byte-identical blob is decodable
+  in Go (postcard is Rust-only). Verified bit-identical decode: the protobuf
+  round-trip equals the old postcard blob; the only suite failure
+  (`golden_roundtrip_no_regression`) pre-exists on clean HEAD (known encoder-path
+  divergence) and is unaffected.
+- **meowcaller:** module #05 `lsf` scaffolded. `LoadSmplTables` is **implemented**
+  (inflate + `proto.Unmarshal` + u32→u16 narrowing) reading the production blob
+  `mlow/smpl_lsf_tables.bin` at the **package root** — not `testdata/`, which is a
+  test-fixture dir unfit for a production asset (mirrors `smpl_cc_blob.bin`).
+  KAT `TestLoadSmplTables` confirms the blob decodes to exactly the captured
+  `testdata/smpl_tables.json`. `DecodeSmplLsf` / `SmplAdvanceLsfState` remain TODO
+  stubs awaiting human-directed logic. `internal/tables` regenerated for the new
+  messages. The datasheet's `load_smpl_tables` verbatim (JSON `include_str!`) is
+  superseded by this protobuf path; the decode logic it documents is unchanged.
+
 ### mlow/mem — protobuf table blob (reference `b90291b`)
 - The reference now stores the cc_blob heap window as a zlib-compressed protobuf
   (`tables.proto`). meowcaller adopts the **shared schema**: embeds the reference's

@@ -15,7 +15,7 @@ Scope: **1:1 calls only.**
 | 02 | toc | `mlow` | [mlow-toc.md](datasheets/mlow-toc.md) | codec/mlow/decode-pipeline §TOC | `mlow/toc.rs` | `toc_vectors.json` | planned |
 | 03 | mem (heap ROM) | `mlow` | mlow-mem.md | codec/mlow | `mlow/smpl_mem.rs` | `smpl_tables.json` | planned |
 | 04 | lpc | `mlow` | mlow-lpc.md | codec/mlow/decode-pipeline | `mlow/smpl_lpc.rs`, `mlow/smpl_perc.rs` (FFT) | `lsf_quant_io.json`, `fe_dump.json` | implemented |
-| 05 | lsf | `mlow` | mlow-lsf.md | codec/mlow/decode-pipeline | `mlow/smpl_decode.rs` | `lsf_vectors.json` | planned |
+| 05 | lsf | `mlow` | mlow-lsf.md | codec/mlow/decode-pipeline | `mlow/smpl_decode.rs` | `lsf_vectors.json` | scaffolded |
 | 06 | lsf_quant | `mlow` | mlow-lsf_quant.md | codec/mlow/decode-pipeline | `mlow/smpl_lsf_quant.rs` | `lsf_quant_io.json` | planned |
 | 07 | pitch | `mlow` | mlow-pitch.md | codec/mlow/decode-pipeline | `mlow/smpl_pitch.rs` | `pitch_vectors.json` | planned |
 | 08 | pulse | `mlow` | mlow-pulse.md | codec/mlow/decode-pipeline | `mlow/smpl_pulse.rs` | `pulse_vectors.json` | planned |

@@ -152,6 +152,325 @@ func (x *Region) GetData() []byte {
 	return nil
 }
 
+// The MLow per-frame LSF runtime CDF tables (func 3559 output, the lsf_* fields
+// of the smpl_tables JSON dump). Stored zlib-compressed protobuf so the Rust
+// reference and the Go port decode the byte-identical blob. u16 CDF entries are
+// widened to uint32 on the wire (protobuf has no u16) and narrowed back on load.
+type SmplLsfTables struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	LsfSel        []*Cdf                 `protobuf:"bytes,1,rep,name=lsf_sel,json=lsfSel,proto3" json:"lsf_sel,omitempty"` // [sel] -> CDF
+	LsfGrid       *LsfGrid               `protobuf:"bytes,2,opt,name=lsf_grid,json=lsfGrid,proto3" json:"lsf_grid,omitempty"`
+	LsfStage2     []*LsfStage2S1         `protobuf:"bytes,3,rep,name=lsf_stage2,json=lsfStage2,proto3" json:"lsf_stage2,omitempty"`      // [stage1]
+	LsfExtra      []uint32               `protobuf:"varint,4,rep,packed,name=lsf_extra,json=lsfExtra,proto3" json:"lsf_extra,omitempty"` // the 3-symbol extra CDF
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SmplLsfTables) Reset() {
+	*x = SmplLsfTables{}
+	mi := &file_tables_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SmplLsfTables) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SmplLsfTables) ProtoMessage() {}
+
+func (x *SmplLsfTables) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SmplLsfTables.ProtoReflect.Descriptor instead.
+func (*SmplLsfTables) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *SmplLsfTables) GetLsfSel() []*Cdf {
+	if x != nil {
+		return x.LsfSel
+	}
+	return nil
+}
+
+func (x *SmplLsfTables) GetLsfGrid() *LsfGrid {
+	if x != nil {
+		return x.LsfGrid
+	}
+	return nil
+}
+
+func (x *SmplLsfTables) GetLsfStage2() []*LsfStage2S1 {
+	if x != nil {
+		return x.LsfStage2
+	}
+	return nil
+}
+
+func (x *SmplLsfTables) GetLsfExtra() []uint32 {
+	if x != nil {
+		return x.LsfExtra
+	}
+	return nil
+}
+
+// One u16 cumulative CDF.
+type Cdf struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	V             []uint32               `protobuf:"varint,1,rep,packed,name=v,proto3" json:"v,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Cdf) Reset() {
+	*x = Cdf{}
+	mi := &file_tables_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Cdf) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Cdf) ProtoMessage() {}
+
+func (x *Cdf) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Cdf.ProtoReflect.Descriptor instead.
+func (*Cdf) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *Cdf) GetV() []uint32 {
+	if x != nil {
+		return x.V
+	}
+	return nil
+}
+
+// The four stage-1 grid CDFs, selected by (match, stage1 != 0).
+type LsfGrid struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Match1        []uint32               `protobuf:"varint,1,rep,packed,name=match1,proto3" json:"match1,omitempty"`
+	Match1Alt     []uint32               `protobuf:"varint,2,rep,packed,name=match1_alt,json=match1Alt,proto3" json:"match1_alt,omitempty"`
+	Match0        []uint32               `protobuf:"varint,3,rep,packed,name=match0,proto3" json:"match0,omitempty"`
+	Match0Alt     []uint32               `protobuf:"varint,4,rep,packed,name=match0_alt,json=match0Alt,proto3" json:"match0_alt,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LsfGrid) Reset() {
+	*x = LsfGrid{}
+	mi := &file_tables_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LsfGrid) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LsfGrid) ProtoMessage() {}
+
+func (x *LsfGrid) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LsfGrid.ProtoReflect.Descriptor instead.
+func (*LsfGrid) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *LsfGrid) GetMatch1() []uint32 {
+	if x != nil {
+		return x.Match1
+	}
+	return nil
+}
+
+func (x *LsfGrid) GetMatch1Alt() []uint32 {
+	if x != nil {
+		return x.Match1Alt
+	}
+	return nil
+}
+
+func (x *LsfGrid) GetMatch0() []uint32 {
+	if x != nil {
+		return x.Match0
+	}
+	return nil
+}
+
+func (x *LsfGrid) GetMatch0Alt() []uint32 {
+	if x != nil {
+		return x.Match0Alt
+	}
+	return nil
+}
+
+// lsf_stage2 nesting: [stage1][config][grid][coeff] -> CDF.
+type LsfStage2S1 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Config        []*LsfStage2S2         `protobuf:"bytes,1,rep,name=config,proto3" json:"config,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LsfStage2S1) Reset() {
+	*x = LsfStage2S1{}
+	mi := &file_tables_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LsfStage2S1) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LsfStage2S1) ProtoMessage() {}
+
+func (x *LsfStage2S1) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LsfStage2S1.ProtoReflect.Descriptor instead.
+func (*LsfStage2S1) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *LsfStage2S1) GetConfig() []*LsfStage2S2 {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+type LsfStage2S2 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Grid          []*LsfStage2S3         `protobuf:"bytes,1,rep,name=grid,proto3" json:"grid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LsfStage2S2) Reset() {
+	*x = LsfStage2S2{}
+	mi := &file_tables_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LsfStage2S2) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LsfStage2S2) ProtoMessage() {}
+
+func (x *LsfStage2S2) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LsfStage2S2.ProtoReflect.Descriptor instead.
+func (*LsfStage2S2) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *LsfStage2S2) GetGrid() []*LsfStage2S3 {
+	if x != nil {
+		return x.Grid
+	}
+	return nil
+}
+
+type LsfStage2S3 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Coeff         []*Cdf                 `protobuf:"bytes,1,rep,name=coeff,proto3" json:"coeff,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LsfStage2S3) Reset() {
+	*x = LsfStage2S3{}
+	mi := &file_tables_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LsfStage2S3) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LsfStage2S3) ProtoMessage() {}
+
+func (x *LsfStage2S3) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LsfStage2S3.ProtoReflect.Descriptor instead.
+func (*LsfStage2S3) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *LsfStage2S3) GetCoeff() []*Cdf {
+	if x != nil {
+		return x.Coeff
+	}
+	return nil
+}
+
 var File_tables_proto protoreflect.FileDescriptor
 
 var file_tables_proto_rawDesc = string([]byte{
@@ -169,11 +488,43 @@ var file_tables_proto_rawDesc = string([]byte{
 	0x30, 0x0a, 0x06, 0x52, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x12, 0x12, 0x0a, 0x04, 0x62, 0x61, 0x73,
 	0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x04, 0x62, 0x61, 0x73, 0x65, 0x12, 0x12, 0x0a,
 	0x04, 0x64, 0x61, 0x74, 0x61, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x04, 0x64, 0x61, 0x74,
-	0x61, 0x42, 0x36, 0x5a, 0x34, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f,
-	0x70, 0x75, 0x72, 0x70, 0x73, 0x68, 0x65, 0x6c, 0x6c, 0x2f, 0x6d, 0x65, 0x6f, 0x77, 0x63, 0x61,
-	0x6c, 0x6c, 0x65, 0x72, 0x2f, 0x6d, 0x6c, 0x6f, 0x77, 0x2f, 0x69, 0x6e, 0x74, 0x65, 0x72, 0x6e,
-	0x61, 0x6c, 0x2f, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f,
-	0x33,
+	0x61, 0x22, 0xc1, 0x01, 0x0a, 0x0d, 0x53, 0x6d, 0x70, 0x6c, 0x4c, 0x73, 0x66, 0x54, 0x61, 0x62,
+	0x6c, 0x65, 0x73, 0x12, 0x29, 0x0a, 0x07, 0x6c, 0x73, 0x66, 0x5f, 0x73, 0x65, 0x6c, 0x18, 0x01,
+	0x20, 0x03, 0x28, 0x0b, 0x32, 0x10, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c,
+	0x65, 0x73, 0x2e, 0x43, 0x64, 0x66, 0x52, 0x06, 0x6c, 0x73, 0x66, 0x53, 0x65, 0x6c, 0x12, 0x2f,
+	0x0a, 0x08, 0x6c, 0x73, 0x66, 0x5f, 0x67, 0x72, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b,
+	0x32, 0x14, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x4c,
+	0x73, 0x66, 0x47, 0x72, 0x69, 0x64, 0x52, 0x07, 0x6c, 0x73, 0x66, 0x47, 0x72, 0x69, 0x64, 0x12,
+	0x37, 0x0a, 0x0a, 0x6c, 0x73, 0x66, 0x5f, 0x73, 0x74, 0x61, 0x67, 0x65, 0x32, 0x18, 0x03, 0x20,
+	0x03, 0x28, 0x0b, 0x32, 0x18, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65,
+	0x73, 0x2e, 0x4c, 0x73, 0x66, 0x53, 0x74, 0x61, 0x67, 0x65, 0x32, 0x53, 0x31, 0x52, 0x09, 0x6c,
+	0x73, 0x66, 0x53, 0x74, 0x61, 0x67, 0x65, 0x32, 0x12, 0x1b, 0x0a, 0x09, 0x6c, 0x73, 0x66, 0x5f,
+	0x65, 0x78, 0x74, 0x72, 0x61, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0d, 0x52, 0x08, 0x6c, 0x73, 0x66,
+	0x45, 0x78, 0x74, 0x72, 0x61, 0x22, 0x13, 0x0a, 0x03, 0x43, 0x64, 0x66, 0x12, 0x0c, 0x0a, 0x01,
+	0x76, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0d, 0x52, 0x01, 0x76, 0x22, 0x77, 0x0a, 0x07, 0x4c, 0x73,
+	0x66, 0x47, 0x72, 0x69, 0x64, 0x12, 0x16, 0x0a, 0x06, 0x6d, 0x61, 0x74, 0x63, 0x68, 0x31, 0x18,
+	0x01, 0x20, 0x03, 0x28, 0x0d, 0x52, 0x06, 0x6d, 0x61, 0x74, 0x63, 0x68, 0x31, 0x12, 0x1d, 0x0a,
+	0x0a, 0x6d, 0x61, 0x74, 0x63, 0x68, 0x31, 0x5f, 0x61, 0x6c, 0x74, 0x18, 0x02, 0x20, 0x03, 0x28,
+	0x0d, 0x52, 0x09, 0x6d, 0x61, 0x74, 0x63, 0x68, 0x31, 0x41, 0x6c, 0x74, 0x12, 0x16, 0x0a, 0x06,
+	0x6d, 0x61, 0x74, 0x63, 0x68, 0x30, 0x18, 0x03, 0x20, 0x03, 0x28, 0x0d, 0x52, 0x06, 0x6d, 0x61,
+	0x74, 0x63, 0x68, 0x30, 0x12, 0x1d, 0x0a, 0x0a, 0x6d, 0x61, 0x74, 0x63, 0x68, 0x30, 0x5f, 0x61,
+	0x6c, 0x74, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0d, 0x52, 0x09, 0x6d, 0x61, 0x74, 0x63, 0x68, 0x30,
+	0x41, 0x6c, 0x74, 0x22, 0x3f, 0x0a, 0x0b, 0x4c, 0x73, 0x66, 0x53, 0x74, 0x61, 0x67, 0x65, 0x32,
+	0x53, 0x31, 0x12, 0x30, 0x0a, 0x06, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x18, 0x01, 0x20, 0x03,
+	0x28, 0x0b, 0x32, 0x18, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73,
+	0x2e, 0x4c, 0x73, 0x66, 0x53, 0x74, 0x61, 0x67, 0x65, 0x32, 0x53, 0x32, 0x52, 0x06, 0x63, 0x6f,
+	0x6e, 0x66, 0x69, 0x67, 0x22, 0x3b, 0x0a, 0x0b, 0x4c, 0x73, 0x66, 0x53, 0x74, 0x61, 0x67, 0x65,
+	0x32, 0x53, 0x32, 0x12, 0x2c, 0x0a, 0x04, 0x67, 0x72, 0x69, 0x64, 0x18, 0x01, 0x20, 0x03, 0x28,
+	0x0b, 0x32, 0x18, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e,
+	0x4c, 0x73, 0x66, 0x53, 0x74, 0x61, 0x67, 0x65, 0x32, 0x53, 0x33, 0x52, 0x04, 0x67, 0x72, 0x69,
+	0x64, 0x22, 0x35, 0x0a, 0x0b, 0x4c, 0x73, 0x66, 0x53, 0x74, 0x61, 0x67, 0x65, 0x32, 0x53, 0x33,
+	0x12, 0x26, 0x0a, 0x05, 0x63, 0x6f, 0x65, 0x66, 0x66, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32,
+	0x10, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x43, 0x64,
+	0x66, 0x52, 0x05, 0x63, 0x6f, 0x65, 0x66, 0x66, 0x42, 0x36, 0x5a, 0x34, 0x67, 0x69, 0x74, 0x68,
+	0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x70, 0x75, 0x72, 0x70, 0x73, 0x68, 0x65, 0x6c, 0x6c,
+	0x2f, 0x6d, 0x65, 0x6f, 0x77, 0x63, 0x61, 0x6c, 0x6c, 0x65, 0x72, 0x2f, 0x6d, 0x6c, 0x6f, 0x77,
+	0x2f, 0x69, 0x6e, 0x74, 0x65, 0x72, 0x6e, 0x61, 0x6c, 0x2f, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73,
+	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 })
 
 var (
@@ -188,18 +539,30 @@ func file_tables_proto_rawDescGZIP() []byte {
 	return file_tables_proto_rawDescData
 }
 
-var file_tables_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_tables_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_tables_proto_goTypes = []any{
-	(*HeapWindow)(nil), // 0: mlow.tables.HeapWindow
-	(*Region)(nil),     // 1: mlow.tables.Region
+	(*HeapWindow)(nil),    // 0: mlow.tables.HeapWindow
+	(*Region)(nil),        // 1: mlow.tables.Region
+	(*SmplLsfTables)(nil), // 2: mlow.tables.SmplLsfTables
+	(*Cdf)(nil),           // 3: mlow.tables.Cdf
+	(*LsfGrid)(nil),       // 4: mlow.tables.LsfGrid
+	(*LsfStage2S1)(nil),   // 5: mlow.tables.LsfStage2S1
+	(*LsfStage2S2)(nil),   // 6: mlow.tables.LsfStage2S2
+	(*LsfStage2S3)(nil),   // 7: mlow.tables.LsfStage2S3
 }
 var file_tables_proto_depIdxs = []int32{
 	1, // 0: mlow.tables.HeapWindow.regions:type_name -> mlow.tables.Region
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	3, // 1: mlow.tables.SmplLsfTables.lsf_sel:type_name -> mlow.tables.Cdf
+	4, // 2: mlow.tables.SmplLsfTables.lsf_grid:type_name -> mlow.tables.LsfGrid
+	5, // 3: mlow.tables.SmplLsfTables.lsf_stage2:type_name -> mlow.tables.LsfStage2S1
+	6, // 4: mlow.tables.LsfStage2S1.config:type_name -> mlow.tables.LsfStage2S2
+	7, // 5: mlow.tables.LsfStage2S2.grid:type_name -> mlow.tables.LsfStage2S3
+	3, // 6: mlow.tables.LsfStage2S3.coeff:type_name -> mlow.tables.Cdf
+	7, // [7:7] is the sub-list for method output_type
+	7, // [7:7] is the sub-list for method input_type
+	7, // [7:7] is the sub-list for extension type_name
+	7, // [7:7] is the sub-list for extension extendee
+	0, // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_tables_proto_init() }
@@ -213,7 +576,7 @@ func file_tables_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_tables_proto_rawDesc), len(file_tables_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
