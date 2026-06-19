@@ -56,6 +56,11 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   be re-ingested from the (now-current) local reference when each module is built.
 
 ### mlow/lpc
+- implemented: smplA2NLSF16 — the fixed-point silk forward A→NLSF — plus its
+  helpers (silk_rshift_round / smlaww / div32 / bwexpander_32 / a2nlsf_trans_poly /
+  eval_poly / init / a2nlsf). KAT-verified **bit-exact** against lsf_quant_io.json
+  (TestA2NLSFMatchesC, worst abs err 0.0). smplLPCAnalyzeWithF2 (FFT-blocked) and
+  the interpolation funcs remain scaffolded.
 - scaffolded: constants + the five public envelope functions (smplWindowLPC20,
   smplLPCAnalyzeWithF2, smplLPCInterpol/Idx, smplA2NLSF16) with three-line stubs.
   Tests wired to lsf_quant_io.json (forward A→NLSF, bit-exact) and fe_dump.json
