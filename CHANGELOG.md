@@ -7,6 +7,24 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### mlow/decoder — module #15 KAT-verified (audible milestone) (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+- Implemented the top-level `MlowDecoder` 1:1 from `decoder.rs`: RED strip → TOC
+  routing (std-opus / SID / inactive → silence) → active-frame decode (3 chained
+  internal frames: LSF → pulses → pitch/gains → reconstruct → CELP `SynthFrame`) →
+  per-packet harmonic postfilter → clamped 60 ms PCM, with cross-frame state
+  (`SmplDecoderState`) persisting across calls. Added `SmplDecoderState`
+  (wiring CelpDecState + HarmPostfilterState, now that both exist).
+- KAT `TestE2EDecodeMatchesUseSmpl` decodes the real `inbound_capture_frames.json`
+  stream and matches the libopus useSmpl reference PCM
+  (`ref_usesmpl_expected.raw`): exact length + **lag-0 Pearson correlation 0.9867**
+  (> 0.95; not bit-exact due to noise PRNG + reference -ffast-math). This is the
+  first audible milestone — the full decode pipeline produces correct PCM.
+- This also validates synth's full CELP output end-to-end; synth #13 → verified
+  (CELP path), `SynthInternalFrame` (WASM-domain alt, unused on the decode path)
+  remains the only `// NOT VALIDATED` body. CodeRabbit: 2 findings (per-function
+  Source-of-truth pins; correlation div-by-zero guard) → fixed, re-review clean.
+
+
 ### mlow/red — module #14 KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Implemented `DepackSplitRed` 1:1 from `red.rs`: the SplitRed header run (redundant
   blocks `0x80|code`,`size`), the main marker, and frame extraction as zero-copy

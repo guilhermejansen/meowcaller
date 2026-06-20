@@ -7,5 +7,5 @@ import "testing"
 // vector — they are validated end-to-end (e2e_vectors.json) by the decoder module.
 // The decoder NLSF reconstruction is covered separately by TestDecoderReconstructsCQlsf.
 func TestSynth(t *testing.T) {
-	t.Skip("blocked: full-frame synth is validated end-to-end via the decoder module (e2e_vectors.json); no standalone unit KAT")
+	t.Skip("covered: the CELP synth path is validated end-to-end by TestE2EDecodeMatchesUseSmpl; SynthInternalFrame (WASM-domain alt) is unused on the decode path")
 }
