@@ -133,8 +133,9 @@ Comments earn their place or they do not exist:
 - **`// Source of truth: ...`** — required as the first line of every function
   body. It is a **GitHub permalink** to the exact reference lines the function
   ports, so a reader can jump straight to the ground truth. For now that is the
-  Rust reference, pinned to a commit SHA with the function's line range (a real,
-  clickable example — this is the actual link in `rangecoder.go`):
+  Rust reference, pinned to the **full 40-character commit SHA** (never an
+  abbreviated/short SHA) with the function's line range (a real, clickable example —
+  this is the actual link in `rangecoder.go`):
   `https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/rangecoder.rs#L203-L226`.
   The path follows the **reference** tree, not the Go package tree: only the codec
   lives under `wacore/src/voip/mlow/`; srtp/signaling/transport sources

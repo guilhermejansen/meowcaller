@@ -78,7 +78,7 @@ var (
 // LoadLsfCb inflates and protobuf-decodes the embedded LSF codebook once and
 // returns the shared, read-only set.
 func LoadLsfCb() *LsfCb {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_lsf_quant.rs#L79-L85
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_lsf_quant.rs#L79-L85
 	lsfCbOnce.Do(func() {
 		zr, err := zlib.NewReader(bytes.NewReader(smplLsfCbBlob))
 		if err != nil {

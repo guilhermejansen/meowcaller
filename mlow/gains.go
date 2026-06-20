@@ -12,7 +12,7 @@ type SmplGainResult struct {
 // DecodeSmplGains decodes the gains+nrgres reads (the p3==4 path). subfrCounts are
 // the per-subframe pulse counts.
 func DecodeSmplGains(dec *RangeDecoder, mem *SmplMem, p3 int32, subfrCounts [4]int32) SmplGainResult {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_gains.rs#L18-L69
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_gains.rs#L18-L69
 	var res SmplGainResult
 	gNrg := mem.GNrg
 

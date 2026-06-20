@@ -7,7 +7,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
-### mlow/synth — module #10 scaffold (reference `ed12f35`)
+### mlow/synth — module #10 scaffold (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Scaffolded the low-band synthesis envelope: `SmplSynthTables`/`LoadSmplSynthTables`,
   `SmplReconstructNLSF`, `SmplNLSF2A`, `SmplGainLin`, `SmplLTPFracGain`, the synth
   state types (`SmplExcGainState`, `SmplPitchSynth`, `SmplFrameSynth`+`New…`),
@@ -22,7 +22,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 - KAT `TestSynth` skips: synth has no standalone unit vector — it's validated
   end-to-end (`e2e_vectors.json`) by module #15 decoder.
 
-### mlow/gains — module #09 KAT-verified (reference `ed12f35`)
+### mlow/gains — module #09 KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Implemented `DecodeSmplGains` 1:1 from `decode_smpl_gains`: main+delta gain CDFs,
   the gain reconstruction (deliberate adjacent-rodata read via the heap window), and
   the per-subframe bucketed nrgres CDF with the gain-derived sign-mask address shift.
@@ -32,7 +32,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   `nrg_res[]` for every `gains_vectors.json` frame. CodeRabbit: 0 findings.
 - No unbuilt requisites — the chain (LSF #05, pulses #08) was already done.
 
-### mlow/pulse — module #08 KAT-verified (reference `ed12f35`)
+### mlow/pulse — module #08 KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Implemented the excitation pulse decode 1:1 from `decode_smpl_pulses`: the
   triangular pulse-count prior (NB/config-0 path), the recursive subframe split
   (`smplSplit3537` via `mem.CDFAt` on g_cc-relative bases), the run-length magnitude
@@ -45,7 +45,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 - This unblocks module #07 pitch's decode KAT (the range coder now reaches the pitch
   block).
 
-### mlow/pitch — module #07 decode KAT-verified (reference `ed12f35`)
+### mlow/pitch — module #07 decode KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Implemented the decode side `DecodeSmplPitch` 1:1 from `decode_smpl_pitch`: the LTP
   gains loop (gain/filter CDFs from `mem.GPitch`+offsets, keyed on p6 and the
   `prev_*` predictors), the primary lag (absolute vs delta off `st.PrevLag`), the
@@ -60,9 +60,9 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   pitch-tables protobuf asset, the `pitchio_ground_truth.json` vector, and a human
   tolerance decision before it can be done.
 
-### reference — all mlow runtime tables migrated to protobuf (reference `ed12f35`)
+### reference — all mlow runtime tables migrated to protobuf (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Drove a reference refactor (`refactor(voip): store all mlow runtime tables as
-  protobuf`, `ed12f35`, pushed) migrating the three remaining postcard table blobs —
+  protobuf`, `ed12f359a086b28e807ba236f0977af1000859fe`, pushed) migrating the three remaining postcard table blobs —
   `smpl_synth_tables`, `lsf_cb_dump`, `smpl_pitch_tables` — to zlib+protobuf
   (`tables.proto`), joining `smpl_tables` and the cc_blob. **Every** mlow runtime
   constant table is now protobuf, so each byte-identical blob loads in the Go port
@@ -78,7 +78,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   filename; KAT JSON stays in `testdata/`). No meowcaller code change yet — the
   per-module proto messages/blobs land when each Go module is built.
 
-### mlow/lsf_quant — module #06 KAT-verified (reference `ed12f35`)
+### mlow/lsf_quant — module #06 KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Implemented the encoder-side LSF vector quantizer: the VQ_temp Mahalanobis
   shortlist, the RD beam (`0.5*order*log2(werr)*RDw_adj + bits`) with per-coeff
   stage-2 clamps and the one-coeff-flip refinement, and the conditional path
@@ -94,9 +94,9 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   the reference's exactness here, distinct from the known encoder pitch-estimator
   soft-divergence (module #07/#16).
 
-### mlow/lsf — module #05 KAT-verified + protobuf LSF table asset (reference `c697c36`)
+### mlow/lsf — module #05 KAT-verified + protobuf LSF table asset (reference `c697c36ffa7875c304ceea9154be30b66cada914`)
 - **Reference change (pushed):** `refactor(voip): store the smpl LSF tables as
-  protobuf` (`c697c36` on `feat/voip-media-stack`). Re-encoded the reference's
+  protobuf` (`c697c36ffa7875c304ceea9154be30b66cada914` on `feat/voip-media-stack`). Re-encoded the reference's
   `smpl_tables.bin` from zlib+postcard to zlib+protobuf (`tables.proto`
   `SmplLsfTables`), mirroring the cc_blob, so the byte-identical blob is decodable
   in Go (postcard is Rust-only). Verified bit-identical decode: the protobuf
@@ -114,21 +114,21 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   dir), mirroring `smpl_cc_blob.bin`. Convention: KAT inputs live in `testdata/`;
   production assets keep the reference name at the package root. `TestLoadSmplTables`
   cross-checks the decoded blob against the captured `testdata/smpl_tables.json`.
-  `internal/tables` regenerated for the new messages; datasheet refreshed to `c697c36`.
+  `internal/tables` regenerated for the new messages; datasheet refreshed to `c697c36ffa7875c304ceea9154be30b66cada914`.
 
-### mlow/mem — protobuf table blob (reference `b90291b`)
+### mlow/mem — protobuf table blob (reference `b90291b1ae979d504adf71d9555b3daf5c7325b1`)
 - The reference now stores the cc_blob heap window as a zlib-compressed protobuf
   (`tables.proto`). meowcaller adopts the **shared schema**: embeds the reference's
   exact `smpl_cc_blob.bin` and decodes it through the generated `internal/tables`
   package (zlib inflate + `proto.Unmarshal`). Dropped the JSON embed and the local
   `genmem` generator. New (sole) third-party dep `google.golang.org/protobuf` — as
   whatsmeow uses; PLAN.md updated. KAT still green (pointers/accessors unchanged);
-  mem SOT permalinks re-pinned to `b90291b`.
+  mem SOT permalinks re-pinned to `b90291b1ae979d504adf71d9555b3daf5c7325b1`.
 
-### reference sync — local checkout to `oxidezap/whatsapp-rust-private`@`674e851`
+### reference sync — local checkout to `oxidezap/whatsapp-rust-private`@`674e85164b35ca19115dfebcf605708d15951ee7`
 - Converted the local Rust reference into a real git checkout of
   `oxidezap/whatsapp-rust-private` (branch `feat/voip-media-stack`) and reset to the
-  tip `674e851` (== our SOT pin; the public-repo permalinks are unchanged — commits
+  tip `674e85164b35ca19115dfebcf605708d15951ee7` (== our SOT pin; the public-repo permalinks are unchanged — commits
   cherry-pick onto `oxidezap/whatsapp-rust`).
 - Verified every datasheet's embedded verbatim against the current tree. Result:
   **all current except `mlow-encoder`**. The supposedly-stale `pitch`/`synth`/
@@ -152,7 +152,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
     verified identical (same regions + `g_cc/g_nrg/g_pitch/clk`), so our embedded
     `smpl_cc_blob.json` stays valid. Datasheet `mlow-mem.md` updated to the current
     source and the packaging change; SOT permalinks stay pinned to the ported
-    commit `674e851…`.
+    commit `674e85164b35ca19115dfebcf605708d15951ee7…`.
   - `toc.rs`, `rangecoder.rs`, `smpl_lpc.rs`, `silk_lsf_cos_tab.rs`, `smpl_perc.rs`
     are **not** in the patch → `toc`, `rangecoder`, `mem` cosine table, and the
     `lpc` scaffold/FFT-dependency are unaffected.

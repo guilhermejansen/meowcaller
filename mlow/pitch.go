@@ -29,7 +29,7 @@ type SmplPitchResult struct {
 // DecodeSmplPitch decodes the LTP gains and pitch lags. p3 = num subframes,
 // p6 = config, subfrCounts = per-subframe pulse counts (from the pulse decode).
 func DecodeSmplPitch(dec *RangeDecoder, mem *SmplMem, st *SmplLsfState, p2, p3, p6 int32, subfrCounts [4]int32) SmplPitchResult {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_pitch.rs#L32-L198
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_pitch.rs#L32-L198
 	res := SmplPitchResult{FiltIdx: [4]int32{-1, -1, -1, -1}}
 	gp := mem.GPitch
 
@@ -209,7 +209,7 @@ type PitchEstState struct {
 
 // ResetCond clears the cross-frame lag-block predictor (smpl_pitch_reset_cond).
 func (s *PitchEstState) ResetCond() {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_pitch_enc.rs#L337-L341
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_pitch_enc.rs#L337-L341
 	// TODO
 	// agent suggestion: set PrevLagblk = -1 and PrevLagidx = -1 (the cond_coding=FALSE reset).
 	// human input:
@@ -253,7 +253,7 @@ type PitchTables struct {
 
 // LoadPitchTables decodes the embedded pitch tables once and returns the shared set.
 func LoadPitchTables() *PitchTables {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_pitch_enc.rs#L87-L92
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_pitch_enc.rs#L87-L92
 	// TODO
 	// agent suggestion: same protobuf-asset path as LoadLsfCb — embed the reference's
 	//   smpl_pitch_tables.bin (zlib+protobuf tables.proto PitchTables) at the package
@@ -265,7 +265,7 @@ func LoadPitchTables() *PitchTables {
 // SmplPitch is the full pitch estimator. ltpBuf is the perceptually-weighted speech of
 // length MaxLTPBufLen; f2 is the LPC power spectrum; codedAsActiveVoice gates the search.
 func SmplPitch(st *PitchEstState, ltpBuf []float32, f2 *[SmplFLen]float32, codedAsActiveVoice bool) PitchResult {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_pitch_enc.rs#L848-L1215
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_pitch_enc.rs#L848-L1215
 	// TODO
 	// agent suggestion: faithful f32 port of smpl_pitch — autocorrelation upsample
 	//   search, get_maxi/get_maxi_k survivors (strict >, lowest-index-wins), the

@@ -27,7 +27,7 @@ type SmplSynthTables struct {
 
 // LoadSmplSynthTables decodes the embedded synthesis tables once and returns the shared set.
 func LoadSmplSynthTables() *SmplSynthTables {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_synth.rs#L97-L104
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L97-L104
 	// TODO
 	// agent suggestion: same protobuf-asset path as LoadSmplTables/LoadLsfCb — embed
 	//   the reference's smpl_synth_tables.bin (zlib+protobuf tables.proto
@@ -40,7 +40,7 @@ func LoadSmplSynthTables() *SmplSynthTables {
 // SmplReconstructNLSF rebuilds the quantized NLSF from the stage indices and the
 // previous frame's NLSF (the envelope the decoder synthesizes from).
 func SmplReconstructNLSF(t *SmplSynthTables, stage1, config, grid int, stage2 *[16]int32, prevNLSF []float32) []float32 {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_synth.rs#L176-L234
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L176-L234
 	// TODO
 	// agent suggestion: port smpl_reconstruct_nlsf — centroid + decorrelation-matrix
 	//   reconstruction (grid==16 inverted by signal type), then the min-spacing
@@ -51,7 +51,7 @@ func SmplReconstructNLSF(t *SmplSynthTables, stage1, config, grid int, stage2 *[
 
 // SmplNLSF2A converts NLSF to the monic LPC coefficient vector A[0..16].
 func SmplNLSF2A(nlsf []float32) []float32 {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_synth.rs#L293-L311
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L293-L311
 	// TODO
 	// agent suggestion: port smpl_nlsf2a — cosine-of-NLSF → P/Q polynomials → A; f64
 	//   accumulation truncated to f32, keep the exact widening.
@@ -61,7 +61,7 @@ func SmplNLSF2A(nlsf []float32) []float32 {
 
 // SmplGainLin maps the quantized log-gain to a linear gain (f64).
 func SmplGainLin(gainQ int32) float64 {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_synth.rs#L350-L362
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L350-L362
 	// TODO
 	// agent suggestion: port smpl_gain_lin — the math.Float32frombits raw reinterpret
 	//   plus the saturating y-as-i32 cast with the 2147483648.0 bounds guarded.
@@ -71,7 +71,7 @@ func SmplGainLin(gainQ int32) float64 {
 
 // SmplLTPFracGain maps the normalized LTP gain to the fractional gain.
 func SmplLTPFracGain(normGain float64) float32 {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_synth.rs#L482-L484
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L482-L484
 	// TODO
 	// agent suggestion: port smpl_ltp_frac_gain (the short scalar map).
 	// human input:
@@ -99,7 +99,7 @@ type SmplFrameSynth struct{}
 
 // NewSmplFrameSynth allocates a zeroed low-band synthesis state.
 func NewSmplFrameSynth() *SmplFrameSynth {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_synth.rs#L493-L517
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L493-L517
 	// TODO
 	// agent suggestion: zero-init the history/gain/LPC state buffers to the reference
 	//   default lengths (SMPL_LTP_HIST + intf + 64, etc.).
@@ -110,7 +110,7 @@ func NewSmplFrameSynth() *SmplFrameSynth {
 // SmplLTPSubframePred runs the fractional LTP/ACB prediction for one subframe,
 // writing predOut from the history at the fractional lag.
 func SmplLTPSubframePred(hist []float32, histPos int32, lagF, gainFrac float32, gst *SmplExcGainState, predOut []float32) {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_synth.rs#L487-L506
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L487-L506
 	// TODO
 	// agent suggestion: port smpl_ltp_subframe_pred — integer+fractional lag via the
 	//   8-tap interpolation kernel, negative-offset history indexing into one slice.
@@ -130,7 +130,7 @@ func SynthInternalFrame(
 	gainQ *[4]int32,
 	pitch *SmplPitchSynth,
 ) (signal []float32, nlsf []float32) {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_synth.rs#L543-L662
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L543-L662
 	// TODO
 	// agent suggestion: port synth_internal_frame — NLSF reconstruct → nlsf2a → per-
 	//   subframe LTP/excitation build → LPC synthesis (f64→f32). Region-1 comb and HP
@@ -158,7 +158,7 @@ type CelpDecState struct{}
 
 // NewCelpDecState allocates a zeroed CELP decoder state.
 func NewCelpDecState() *CelpDecState {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_celpdec.rs#L337-L349
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_celpdec.rs#L337-L349
 	// TODO
 	// agent suggestion: zero-init the ACB/LPC/noise/postfilter state to the reference
 	//   default lengths.
@@ -176,7 +176,7 @@ func (s *CelpDecState) SynthFrame(
 	frameLength16 int32,
 	out []float32,
 ) {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_celpdec.rs#L372-L488
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_celpdec.rs#L372-L488
 	// TODO
 	// agent suggestion: port CelpDecState::synth_frame — LSF interpolation, per-
 	//   subframe ACB(pitch)+FCB(pulses)+noise excitation with gains, LPC synthesis,
@@ -198,7 +198,7 @@ type NrgResQuant struct {
 
 // QuantNrgRes4 quantizes the 4-subframe residual-energy vector.
 func QuantNrgRes4(nrgres *[4]float32) NrgResQuant {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_nrgres.rs#L61-L101
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_nrgres.rs#L61-L101
 	// TODO
 	// agent suggestion: port quant_nrg_res_4 — frame-energy + shape-codebook search
 	//   against NRGRES_SHAPE_CB_4_Q10, producing FrameQi/ShapeQi and the per-subframe

@@ -11,7 +11,7 @@ var smplPulseCountByte = [8]uint8{80, 160, 160, 16, 32, 32, 0, 0}
 // Mem8Static reads the one static rodata table the pulse path needs (0xe8990..0xe8998);
 // every other address reads as 0.
 func Mem8Static(addr uint32) byte {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_pulse.rs#L13-L19
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_pulse.rs#L13-L19
 	if addr >= 0xe8990 && addr < 0xe8998 {
 		return smplPulseCountByte[addr-0xe8990]
 	}
@@ -28,7 +28,7 @@ type SmplPulseResult struct {
 // samples (320), p3 = num subframes (4), p4 = regular flag (1), p6 = config (0/1),
 // s1 = LSF stage-1 selector.
 func DecodeSmplPulses(dec *RangeDecoder, mem *SmplMem, p2, p3, p4, p6, s1 int32) SmplPulseResult {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_pulse.rs#L29-L206
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_pulse.rs#L29-L206
 	n := p2
 	if n < 0 {
 		n = 0
@@ -207,7 +207,7 @@ func DecodeSmplPulses(dec *RangeDecoder, mem *SmplMem, p2, p3, p4, p6, s1 int32)
 // smplSplit3537 splits count pulses across a range, returning the count assigned to
 // the first half (func 3537).
 func smplSplit3537(dec *RangeDecoder, mem *SmplMem, count, granularity int32, base uint32) int32 {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f35/wacore/src/voip/mlow/smpl_pulse.rs#L208-L230
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_pulse.rs#L208-L230
 	lo := count
 	if granularity < lo {
 		lo = granularity
