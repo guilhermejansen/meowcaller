@@ -22,16 +22,21 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   avoid the `matrixMultTransp16` collision with lsf_quant. The datasheet's bundled
   perc front-end + bitrate controller remain for the encoder module.
 
-### mlow/postfilter — scaffold (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
-- Scaffolded the postfilter envelope (synth's CELP prerequisite, per directive #5):
-  `SmplPostfilterState`+`SmplCombPostfilter` (excitation comb), `HpPostfilterState`+
-  `NewHpPostfilterState`/`SmplPfFir3`/`SmplGetHpCoefs`/`SmplFiltArma2`/`SmplHpPostfilter`
-  (post-LPC HP comb), and `HarmPostfilterState`+`NewHarmPostfilterState`/
-  `SmplHarmPostfilter` (per-packet harmonic) — all TODO stubs with `Source of truth:`
-  pins (smpl_postfilter.rs / smpl_harmcomb.rs / smpl_harm_postfilter.rs). KAT
-  `TestPostfilter` skips until the bodies land (enable with hp_postfilter_vectors.raw /
-  harm_postfilter_vectors.raw). This provides the `HarmPostfilterState` type that
-  synth's `SmplDecoderState` and CELP `SynthFrame` need.
+### mlow/postfilter — HP comb + harmonic KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+- Implemented the post-LPC HP (pitch-harmonic) comb 1:1 from `smpl_harmcomb.rs`
+  (`SmplHpPostfilter` + `SmplPfFir3`/`SmplFiltArma2`/`SmplGetHpCoefs` + the unrolled
+  `pfFiltAR1`/`pfFiltAR2`/`pfFiltMA1`, `smplCalcHPCoefs`/`newCoefs`/`rampDn`) and the
+  per-packet harmonic postfilter from `smpl_harm_postfilter.rs` (`SmplHarmPostfilter`
+  + `harmPostfilterCore`, the LP-filter bank, `harmFiltMA16Sym`).
+- KATs `TestHpPostfilter` (hp_postfilter_vectors.raw) and `TestHarmPostfilter`
+  (harm_postfilter_vectors.raw, both copied into testdata) pass within the i16 output
+  LSB (1/32768) — the reference is -ffast-math so it's not bit-exact through the
+  near-unit-circle pitch comb; the harmonic transition zero-input response is bounded
+  by 6e-4 on near-silent voiced→silence boundaries, as in the reference. CodeRabbit: 0.
+- `SmplCombPostfilter` (the Region-1 excitation comb) stays a stub: it's gated off
+  (`SMPL_TAIL_REGION1` == false), never invoked on the decode path, and has no
+  standalone vector. Named the harmonic helpers distinctly (`harmDotProd`/`harmNrg`)
+  to avoid clashing with lsf_quant's `dotProd` / noise's `smplNrg`.
 
 ### mlow/synth — module #10 scaffold + NLSF reconstruction verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Scaffolded the full low-band synthesis envelope (TODO stubs with `Source of truth:`
