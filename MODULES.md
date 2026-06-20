@@ -19,10 +19,10 @@ confirmed when the module is reached.
 
 | # | Module | Package | Deps | Datasheet | Reference (ingest) | KAT | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 01 | rangecoder | `mlow` | — | rangecoder.md | `mlow/rangecoder.rs` | `rc_vectors.json` | planned |
-| 02 | mem (heap ROM) | `mlow` | — | mlow-mem.md | `mlow/smpl_mem.rs` | `smpl_tables.json` | planned |
-| 03 | toc | `mlow` | rangecoder | [mlow-toc.md](datasheets/mlow-toc.md) | `mlow/toc.rs` | `toc_vectors.json` | planned |
-| 04 | lpc | `mlow` | — | mlow-lpc.md | `mlow/smpl_lpc.rs`, `mlow/smpl_perc.rs` (FFT) | `lsf_quant_io.json`, `fe_dump.json` | implemented |
+| 01 | rangecoder | `mlow` | — | rangecoder.md | `mlow/rangecoder.rs` | `rc_vectors.json` | verified |
+| 02 | mem (heap ROM) | `mlow` | — | mlow-mem.md | `mlow/smpl_mem.rs` | `smpl_tables.json` | verified |
+| 03 | toc | `mlow` | rangecoder | [mlow-toc.md](datasheets/mlow-toc.md) | `mlow/toc.rs` | `toc_vectors.json` | verified |
+| 04 | lpc | `mlow` | — | mlow-lpc.md | `mlow/smpl_lpc.rs`, `mlow/smpl_perc.rs` (FFT) | `lsf_quant_io.json`, `fe_dump.json` | verified |
 | 05 | lsf | `mlow` | rangecoder, mem | mlow-lsf.md | `mlow/smpl_decode.rs` | `lsf_vectors.json` | verified |
 | 06 | pulse | `mlow` | rangecoder, mem | mlow-pulse.md | `mlow/smpl_pulse.rs` | `pulse_vectors.json` | verified |
 | 07 | gains | `mlow` | rangecoder, mem, pulse | mlow-gains.md | `mlow/smpl_gains.rs` | `gains_vectors.json` | verified |

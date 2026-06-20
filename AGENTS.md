@@ -95,6 +95,18 @@ a module thus re-activates the downstream KATs it unblocks; leaving a now-satisf
 KAT skipped, or a now-covered marker in place, is a VERIFY failure. State in the chat
 which KATs you enabled (or why each still-skipped one remains blocked) at each commit.
 
+**Keep the MODULES.md Status column true to the code.** Status is not a wish — it is
+the module's actual build state, derived from its KAT: `verified` only when the KAT
+runs and passes (not `t.Skip`'d); `scaffolded` when the KAT is skipped; `partial`
+when a module has both passing and skipped KATs; `implemented` for code with no KAT
+yet; `planned` for no source. A curated parenthetical note may follow the word
+(e.g. `verified (decode; estimator scaffolded)`). Whenever a commit changes a
+module's build state, update its Status (and note) in the same commit — this is part
+of VERIFY. A Status that disagrees with the code's KAT reality is a defect: the
+reviewer (CodeRabbit) flags it and the agent fixes it. No external script or git
+hook owns this — it is maintained in-tree, by hand, like every other fact in the
+registry.
+
 If the datasheet for the module does not exist yet, write it first (embed the
 reference source verbatim + the Go target, per `datasheets/_TEMPLATE.md`), get it
 reviewed, and only then scaffold. Datasheets are written one module at a time.
