@@ -15,7 +15,7 @@ import (
 
 // Low-band synthesis: NLSF reconstruction, NLSF→LPC, gain linearization, LTP/ACB
 // excitation prediction, and the per-internal-frame synthesis that turns decoded
-// parameters into PCM. Validated end-to-end via the decoder (module #15).
+// parameters into PCM. Validated end-to-end via the decoder module.
 
 const (
 	SmplOrder      = 16
@@ -283,7 +283,7 @@ func SmplReconstructNLSF(t *SmplSynthTables, stage1, config, grid int, stage2 *[
 func SmplNLSF2A(nlsf []float32) []float32 {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L293-L311
 	// NOT VALIDATED: 1:1 port, no passing KAT exercises it yet — validated end-to-end
-	// once the #15 decoder runs e2e_vectors.json. Remove this line when that KAT passes.
+	// once the decoder module runs e2e_vectors.json. Remove this line when that KAT passes.
 	order := len(nlsf)
 	half := order / 2
 	cosv := make([]float64, order)
@@ -345,7 +345,7 @@ func smplLPCSynthesis(ex, a, out, state []float32) {
 func SmplGainLin(gainQ int32) float64 {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L350-L362
 	// NOT VALIDATED: 1:1 port, no passing KAT exercises it yet — validated end-to-end
-	// once the #15 decoder runs e2e_vectors.json. Remove this line when that KAT passes.
+	// once the decoder module runs e2e_vectors.json. Remove this line when that KAT passes.
 	y := float32(gainQ)*6.103515625e-05*0.10000000149011612*27749388.0 + 1064866816.0
 	var i int32
 	if y < 2147483648.0 && y > -2147483648.0 {
@@ -372,7 +372,7 @@ func smplFloorF32(x float32) float32 {
 func SmplLTPFracGain(normGain float64) float32 {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L482-L484
 	// NOT VALIDATED: 1:1 port, no passing KAT exercises it yet — validated end-to-end
-	// once the #15 decoder runs e2e_vectors.json. Remove this line when that KAT passes.
+	// once the decoder module runs e2e_vectors.json. Remove this line when that KAT passes.
 	return float32(normGain)*-0.16999998688697815 + 0.3499999940395355
 }
 
@@ -478,7 +478,7 @@ type SmplPitchSynth struct {
 // the LTP/excitation history plus the gain smoother. (The reference also carries
 // Region-1 and HP postfilter state for paths gated off by SMPL_TAIL_REGION1 /
 // SMPL_HP_POSTFILTER — those gated blocks are not ported here; they would need the
-// #11 postfilter module's state types.)
+// postfilter module's state types.)
 type SmplFrameSynth struct {
 	lpcState [SmplOrder]float32
 	ltpHist  []float32
@@ -496,7 +496,7 @@ func NewSmplFrameSynth() *SmplFrameSynth {
 func SmplLTPSubframePred(hist []float32, histPos int32, lagF, gainFrac float32, gst *SmplExcGainState, predOut []float32) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L487-L506
 	// NOT VALIDATED: 1:1 port, no passing KAT exercises it yet — validated end-to-end
-	// once the #15 decoder runs e2e_vectors.json. Remove this line when that KAT passes.
+	// once the decoder module runs e2e_vectors.json. Remove this line when that KAT passes.
 	var fracOut [2 * 2 * 40]float32
 	lags := []float32{lagF, lagF}
 	smplFracLTP(lags, 2, hist, histPos-648, smplFracStateLen, fracOut[:])
@@ -517,9 +517,9 @@ func SynthInternalFrame(
 ) (signal []float32, nlsf []float32) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L543-L662
 	// NOT VALIDATED: 1:1 port, no passing KAT exercises it yet — validated end-to-end
-	// once the #15 decoder runs e2e_vectors.json. Remove this line when that KAT passes.
+	// once the decoder module runs e2e_vectors.json. Remove this line when that KAT passes.
 	// The reference's Region-1 excitation comb and post-LPC HP postfilter are gated off
-	// (SMPL_TAIL_REGION1 / SMPL_HP_POSTFILTER == false) and need the #11 postfilter
+	// (SMPL_TAIL_REGION1 / SMPL_HP_POSTFILTER == false) and need the postfilter
 	// module; those gated blocks are omitted here, matching the vector-capture config.
 	nlsf = SmplReconstructNLSF(t, stage1, config, grid, stage2, prevNLSF)
 	a := SmplNLSF2A(nlsf)
@@ -620,8 +620,8 @@ func (s *CelpDecState) SynthFrame(
 	// TODO
 	// agent suggestion: port CelpDecState::synth_frame — LSF interpolation, per-
 	//   subframe ACB(pitch)+FCB(pulses)+noise excitation with gains, LPC synthesis,
-	//   then the HP postfilter (always run on this path). Reaches into noise (#13),
-	//   postfilter (#11), and the ACB gain tables.
+	//   then the HP postfilter (always run on this path). Reaches into noise,
+	//   postfilter, and the ACB gain tables.
 	// human input:
 	panic("mlow: CelpDecState.SynthFrame not yet implemented (scaffold)")
 }
@@ -677,7 +677,7 @@ var nrgresShapeCB4Q10 = [smplResNrgShapeCBN4 * 4]int16{
 func QuantNrgRes4(nrgres *[4]float32) NrgResQuant {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_nrgres.rs#L61-L101
 	// NOT VALIDATED: 1:1 port, no passing KAT exercises it yet — validated via the
-	// encoder round-trip / e2e at #15-#16. Remove this line when a covering KAT passes.
+	// encoder round-trip / e2e at the decoder/encoder modules. Remove this line when a covering KAT passes.
 	var nrgresDB [4]float32
 	var frameDB float32
 	for i := 0; i < 4; i++ {
