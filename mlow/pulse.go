@@ -22,6 +22,10 @@ func Mem8Static(addr uint32) byte {
 type SmplPulseResult struct {
 	Pulses []int32  // signed pulse magnitudes per sample position (len = p2)
 	Subfr  [4]int32 // per-subframe pulse counts
+	// Raw entropy symbols (for the encoder to replay byte-exactly): the per-position
+	// run-length magnitude symbols and the batched raw sign symbols, in read order.
+	MagRuns  []int32
+	SignSyms []SmplRawSym
 }
 
 // DecodeSmplPulses decodes the pulse blocks of one internal frame. p2 = frame
@@ -155,6 +159,7 @@ func DecodeSmplPulses(dec *RangeDecoder, mem *SmplMem, p2, p3, p4, p6, s1 int32)
 			off := cdfp + uint32((cBaseOff-int64(pos))*2)
 			cdf := mem.CDFAt(off, int(pos+1))
 			m := dec.DecodeCDF(cdf)
+			res.MagRuns = append(res.MagRuns, m)
 			if m > 0 || k == 0 {
 				pulseIdx++
 				runPos += m
@@ -183,6 +188,7 @@ func DecodeSmplPulses(dec *RangeDecoder, mem *SmplMem, p2, p3, p4, p6, s1 int32)
 				break
 			}
 			sym := dec.DecodeRawSymbol(uint32(nbits))
+			res.SignSyms = append(res.SignSyms, SmplRawSym{Sym: sym, Nbits: uint32(nbits)})
 			bitfield := sym << uint32(16-nbits)
 			end := p + nbits
 			for q := p; q < end; q++ {

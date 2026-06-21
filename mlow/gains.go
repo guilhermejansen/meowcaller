@@ -7,6 +7,9 @@ package mlow
 type SmplGainResult struct {
 	GainQ  [4]int32 // per-subframe quantized log-gain (Q-domain)
 	NrgRes [4]int32 // per-subframe energy-residual symbol (only subframes with pulses are read)
+	// Raw entropy symbols (for the encoder to replay): the main + delta gain symbols.
+	GainMain  int32
+	GainDelta int32
 }
 
 // DecodeSmplGains decodes the gains+nrgres reads (the p3==4 path). subfrCounts are
@@ -19,6 +22,8 @@ func DecodeSmplGains(dec *RangeDecoder, mem *SmplMem, p3 int32, subfrCounts [4]i
 	// main gain (n=85) + delta gain (n=99)
 	gainMain := dec.DecodeCDF(mem.CDFAt(gNrg+0x1362, 85))
 	gainDelta := dec.DecodeCDF(mem.CDFAt(gNrg+0x1098, 99))
+	res.GainMain = gainMain
+	res.GainDelta = gainDelta
 	cfgSel := int32(2)
 
 	// gain reconstruction. The index sf + p3*gain_delta is NOT bounded to the visible

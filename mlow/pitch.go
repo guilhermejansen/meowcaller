@@ -1,5 +1,11 @@
 package mlow
 
+import (
+	_ "embed"
+	"encoding/json"
+	"sync"
+)
+
 // Pitch / LTP parameters. The decode side (DecodeSmplPitch) reads the LTP gains and
 // pitch lags from the bitstream and is the KAT-verified path; the estimator side
 // (SmplPitch) is the encoder analysis and is a known soft-divergence (see datasheet).
@@ -251,15 +257,122 @@ type PitchTables struct {
 	BlockTransitionCmf [][]uint32
 }
 
+//go:embed smpl_pitch_tables.json
+var smplPitchTablesJSON []byte
+
+var (
+	pitchTablesOnce sync.Once
+	pitchTables     *PitchTables
+)
+
 // LoadPitchTables decodes the embedded pitch tables once and returns the shared set.
+// (The encode side needs only the lag-contour tables; blocktracks/estimator tables
+// are not parsed here.) The asset is the reference's JSON dump verbatim.
 func LoadPitchTables() *PitchTables {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_pitch_enc.rs#L87-L92
-	// TODO
-	// agent suggestion: same protobuf-asset path as LoadLsfCb — embed the reference's
-	//   smpl_pitch_tables.bin (zlib+protobuf tables.proto PitchTables) at the package
-	//   root, inflate + proto.Unmarshal + narrow (usize<-u32), memoized with sync.Once.
-	// human input:
-	panic("mlow: LoadPitchTables not yet implemented (scaffold)")
+	pitchTablesOnce.Do(func() {
+		var pb struct {
+			Blocksegs []struct {
+				Nblocks int   `json:"nblocks"`
+				Blocks  []int `json:"blocks"`
+				Seglens []int `json:"seglens"`
+			} `json:"blocksegs"`
+			Blocksegs2idx      []int      `json:"blocksegs2idx"`
+			BlocksegIdxCmf     []uint32   `json:"blockseg_idx_CMF"`
+			DeltaLagCmfs       [][]uint32 `json:"delta_lag_CMFs"`
+			BlocksegsIx        [][2]int   `json:"blocksegs_ix"`
+			FirstblockRange    [][2]int   `json:"firstblock_range"`
+			BlockTransitionCmf [][]uint32 `json:"block_transition_CMF"`
+		}
+		if err := json.Unmarshal(smplPitchTablesJSON, &pb); err != nil {
+			panic("mlow: pitch tables JSON: " + err.Error())
+		}
+		t := &PitchTables{
+			Blocksegs2idx:      pb.Blocksegs2idx,
+			BlocksegIdxCmf:     pb.BlocksegIdxCmf,
+			DeltaLagCmfs:       pb.DeltaLagCmfs,
+			BlocksegsIx:        pb.BlocksegsIx,
+			FirstblockRange:    pb.FirstblockRange,
+			BlockTransitionCmf: pb.BlockTransitionCmf,
+		}
+		for _, s := range pb.Blocksegs {
+			t.Blocksegs = append(t.Blocksegs, pitchBlockSeg{Nblocks: s.Nblocks, Blocks: s.Blocks, Seglens: s.Seglens})
+		}
+		pitchTables = t
+	})
+	return pitchTables
+}
+
+// pitch lag-contour wire constants (smpl_pitch_enc.rs).
+const (
+	pitchBlocksize    = 64 // PITCHBLOCK_MS(2) * FS_KHZ(16) * 2
+	pitchNumBlocks    = 9  // (MAXPITCH_MS - MINPITCH_MS)/PITCHBLOCK_MS
+	pitchNumSubframes = NumSubframes
+)
+
+// encodeLagsWire is the faithful port of C smpl_encode_lags (pEcCtx != NULL): write
+// the blockseg selector + the per-40-block lag indices (laginds) to the range stream.
+// This IS the voiced lag wire encode, the inverse of DecodeSmplPitch's contour
+// reconstruction. prevLagblk/prevLagidx are the lag predictor (-1 at packet start /
+// after a no-match); mode (0/1/2 by mean ACB gain) selects the delta-lag CMF.
+func encodeLagsWire(tab *PitchTables, enc *RangeEncoder, blocksegsIx int, laginds *[NumSubframes]int32, prevLagblk, prevLagidx int32, mode int) {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_pitch_enc.rs#L726-L799
+	ixJulia := int32(tab.Blocksegs2idx[blocksegsIx])
+	blocksize := int32(pitchBlocksize)
+	pblockseg := &tab.Blocksegs[blocksegsIx]
+
+	if prevLagblk < 0 {
+		cmf := tab.BlocksegIdxCmf
+		enc.Encode(cmf[ixJulia-1], cmf[ixJulia], cmf[len(tab.Blocksegs)])
+	} else {
+		cmf := tab.BlockTransitionCmf[prevLagblk]
+		b0 := pblockseg.Blocks[0]
+		enc.Encode(cmf[b0], cmf[b0+1], cmf[pitchNumBlocks])
+		startIx := int32(tab.FirstblockRange[b0][0])
+		cmfLen := int32(tab.FirstblockRange[b0][1] - tab.FirstblockRange[b0][0] + 1)
+		cmf2 := tab.BlocksegIdxCmf[startIx:]
+		lo := ixJulia - startIx - 1
+		hi := ixJulia - startIx
+		enc.Encode(cmf2[lo]-cmf2[0], cmf2[hi]-cmf2[0], cmf2[cmfLen]-cmf2[0])
+	}
+
+	blk := int32(pblockseg.Blocks[0])
+	deltaBlk := blk - prevLagblk
+	startSeg := 0
+	lagindsIx := 0
+	if !(prevLagblk > -1 && deltaBlk >= -1 && deltaBlk <= 2) {
+		idxMod := uint32(laginds[lagindsIx] - blk*blocksize)
+		enc.Encode(idxMod, idxMod+1, uint32(blocksize))
+		prevLagblk = blk
+		prevLagidx = laginds[lagindsIx]
+		lagindsIx += pblockseg.Seglens[0]
+		startSeg = 1
+	}
+	deltaLagCmf := tab.DeltaLagCmfs[mode]
+	for k := startSeg; k < pblockseg.Nblocks; k++ {
+		blk = int32(pblockseg.Blocks[k])
+		idx := laginds[lagindsIx]
+		lagindsIx += pblockseg.Seglens[k]
+		deltaBlk = blk - prevLagblk
+		deltaIdx := idx - prevLagidx
+		prevLagidxMod := prevLagidx - prevLagblk*blocksize
+		deltaRangeStart := -prevLagidxMod + deltaBlk*blocksize
+		cmfBase := int(deltaRangeStart + 2*blocksize - 1)
+		ix := int(deltaIdx - deltaRangeStart)
+		p0 := deltaLagCmf[cmfBase]
+		enc.Encode(deltaLagCmf[cmfBase+ix]-p0, deltaLagCmf[cmfBase+ix+1]-p0, deltaLagCmf[cmfBase+int(blocksize)]-p0)
+		prevLagblk = blk
+		prevLagidx = idx
+	}
+}
+
+// smplLagsPredictorAfter is the lag predictor after the voiced lag encode:
+// prevLagblk = blocks[nblocks-1], prevLagidx = laginds[NumSubframes-1].
+func smplLagsPredictorAfter(tab *PitchTables, blocksegsIx int, laginds *[NumSubframes]int32) (int32, int32) {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_pitch_enc.rs#L803-L811
+	pblockseg := &tab.Blocksegs[blocksegsIx]
+	lastBlk := int32(pblockseg.Blocks[pblockseg.Nblocks-1])
+	return lastBlk, laginds[NumSubframes-1]
 }
 
 // SmplPitch is the full pitch estimator. ltpBuf is the perceptually-weighted speech of

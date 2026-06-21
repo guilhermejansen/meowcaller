@@ -7,6 +7,35 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### mlow/encoder — module #16 classifier + entropy coder KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+- Ported the voiced/unvoiced classifier 1:1 from `smpl_signal_mode.rs`:
+  `SmplGetSignalMode` (five voicing strengths — pitch correlation, VAD, spectral
+  tilt, harmonicity, short lag — plus per-stream `VuvMode` hysteresis →
+  `voicing_strength`), `BuildF2w`, `HarmStrengthAt`, `spectralHarmonicity`. KAT
+  `TestSignalModeGroundTruth` threads one `VuvMode` over the C dump
+  (`sigmode_ground_truth.json`): voicing_strength **max_err 1.2e-07** (< 1e-4),
+  voiced decision matches C every frame; `HarmStrengthAt` within 0.034.
+- Implemented the full entropy encoder (`EncodeSmplFrame`) — the exact inverse of
+  the byte-exact decoder — from `encode.rs`: `encodeSmplLsf`, `encodeSmplPulses`
+  (+`encodeSplit3537`), `encodeSmplGains`, and the voiced `encodeSmplPitch` with
+  the lag-contour wire coder (`encodeLagsWire` / `smplLagsPredictorAfter`) over
+  the embedded pitch tables (`LoadPitchTables`, `smpl_pitch_tables.json`). The
+  decode path now records the raw entropy symbols it reads (pulse `MagRuns`/
+  `SignSyms`, gain `GainMain`/`GainDelta`) so the encoder replays them exactly.
+- KAT `TestEntropyEncoderByteExact`: decode→re-encode is **byte-exact on 61
+  fully-unvoiced active frames** from the real capture (LSF + pulses + gains),
+  modulo trailing range-coder zero padding the peer encoder trims (the decoder
+  never reads it; verified by re-decode). KAT `TestPitchBlockRoundTripsContour`
+  (the reference's own test): the voiced lag encode round-trips through
+  `DecodeSmplPitch` — reconstructed `BlockLags` == encoded `laginds`.
+- Remaining: `Encode` (pcm→wire) still returns `ErrEncodeUnimplemented` — it needs
+  the analysis DSP front-end (`smpl_analyze_frame_st`: LPC analysis, pitch
+  estimator, perceptual weighting, bitrate control, CELP/LSF quantization), a
+  large soft-divergent effort (no byte-exact vector; only a tone-correlation
+  round-trip). The entropy coder it would feed is done and verified.
+- This is the last codec (mlow) module; modules #17+ are the crypto/transport/
+  signaling stack.
+
 ### mlow/decoder — module #15 KAT-verified (audible milestone) (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Implemented the top-level `MlowDecoder` 1:1 from `decoder.rs`: RED strip → TOC
   routing (std-opus / SID / inactive → silence) → active-frame decode (3 chained
