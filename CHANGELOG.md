@@ -7,6 +7,26 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### srtp/sframe — module #20 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+- `srtp` package gains SFrame E2E media encryption: per-participant key derivation
+  (`FormatSframeParticipantID`/`SframeInfoLabel`/`DeriveE2eSframeKeyForParticipant`),
+  the `SframeSession` with `Encrypt`/`Decrypt`, and the AES-128-GCM (non-standard
+  16-byte nonce, via `cipher.NewGCMWithNonceSize`) + varint-header machinery.
+  Implemented over stdlib `crypto/aes`+`crypto/cipher`+`encoding/binary` (no new
+  deps); the reference's `encode_varint`/`decode_varint` are the identical stdlib
+  unsigned LEB128 (`binary.AppendUvarint`/`Uvarint`), and the shared mod.rs
+  `format_participant_id` is ported. **Error-based** (no panics): the 32-byte callKey
+  check yields `errBadCallKeyLen`, AES invariants bubble. `Decrypt` returns
+  `([]byte, bool)` mapping the `SframeIn` enum — `ok=false` is the plain-Opus
+  pass-through classification (GCM auth is the sole discriminator, fail-closed). KAT
+  (`kats.json` sframe section, synthetic — no PII) passes byte-exact: participant
+  id/label, peer key32, counter→IV, varint header + round-trip, encrypt_out, plus
+  encrypt/decrypt round-trip, wrong-key fail-closed, and plain-Opus pass-through.
+  CodeRabbit: clean (one doc-comment finding was a false positive — the comment is
+  present). Datasheet envelope refreshed (dropped the removed `MbedtlsHKDFSHA256`;
+  error returns). **KAT-verified.** `DeriveWarpAuthKey` is left a stub — no KAT here;
+  it is implemented and validated under #24 warp.
+
 ### srtp/hbh — module #19 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
 - `srtp` package gains the hop-by-hop SRTP path: `SrtpKeyingMaterial` /
   `LibsrtpSessionKeys` types, the two-stage WA-SFU KDF derivation

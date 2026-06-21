@@ -384,15 +384,13 @@ const (
 	KDFLabelWarpAuth  = "warp auth key"
 )
 
-func MbedtlsHKDFSHA256(salt, ikm []byte, info string, okmLen int) []byte
-
 func FormatSframeParticipantID(jid string) string
 
 func SframeInfoLabel(participantID string) string
 
-func DeriveE2eSframeKeyForParticipant(callKey []byte, participantID string) ([]byte, bool)
+func DeriveE2eSframeKeyForParticipant(callKey []byte, participantID string) ([]byte, error)
 
-func DeriveWarpAuthKey(callKey []byte) ([]byte, bool)
+func DeriveWarpAuthKey(callKey []byte) ([]byte, error)
 
 type SframeSession struct {
 	SelfParticipantID string
@@ -400,12 +398,20 @@ type SframeSession struct {
 	// unexported: encryptKey [16]byte, decryptKey [16]byte, txCounter uint64
 }
 
-func NewSframeSession(callKey []byte, selfJID, peerJID string) (*SframeSession, bool)
+func NewSframeSession(callKey []byte, selfJID, peerJID string) (*SframeSession, error)
 
-func (s *SframeSession) Encrypt(plaintext []byte) []byte
+func (s *SframeSession) Encrypt(plaintext []byte) ([]byte, error)
 
 func (s *SframeSession) Decrypt(frame []byte) ([]byte, bool)
 ```
+
+The `Option`/`expect` returns become Go `error` (no panics): the 32-byte callKey
+check yields `errBadCallKeyLen`, AES invariants bubble the `crypto/aes` error. The
+reference's `SframeIn` enum maps to `Decrypt`'s `([]byte, bool)`: `ok=true` is
+`Decrypted(plain)`; `ok=false` is `Plaintext` (a *classification*, not an error — the
+caller uses the raw frame bytes). The removed `mbedtls_hkdf_sha256` is just
+`util.HKDFSHA256`, and `encode_varint`/`decode_varint` are the stdlib
+`binary.AppendUvarint`/`Uvarint` (identical unsigned LEB128).
 
 ## Implementation suggestions (guidance, not authoritative)
 
@@ -429,5 +435,6 @@ func (s *SframeSession) Decrypt(frame []byte) ([]byte, bool)
   offsets exactly as the Rust slices `&bare[..at]` / `&bare[at+1..]` do.
 - Varint is LEB128 (7 bits/byte, MSB continuation). `decode_varint` rejects shifts
   past 63 bits; the header's trailing byte is the total header length and must equal
-  `len(header)`. `looks_like_opus` checks the first byte against the masks
-  `0x10`, `(b&0xf8)==0x50`, `(b&0xfc)==0xf8`.
+  `len(header)`. There is no payload heuristic: `decrypt` discriminates **solely** by
+  GCM authentication — a frame whose trailing header parses AND whose tag verifies is
+  `Decrypted`; anything else fails closed to `Plaintext` (use the raw bytes).

@@ -36,8 +36,6 @@ func loadSframeFields(t *testing.T) sframeFields {
 // TestSframeParticipantKeyAndLabel checks the participant id, info label, and the
 // derived 32-byte per-participant key against kats.json.
 func TestSframeParticipantKeyAndLabel(t *testing.T) {
-	t.Skip("blocked: srtp/sframe bodies are stubs; enable when implemented")
-
 	k := loadKat(t)
 	sf := loadSframeFields(t)
 	callKey := mustHex(t, k.Inputs.CallKey)
@@ -61,8 +59,6 @@ func TestSframeParticipantKeyAndLabel(t *testing.T) {
 // TestSframeCounterIVAndHeader checks the GCM nonce and the varint header (with a
 // parse round-trip) against kats.json.
 func TestSframeCounterIVAndHeader(t *testing.T) {
-	t.Skip("blocked: srtp/sframe bodies are stubs; enable when implemented")
-
 	sf := loadSframeFields(t)
 	iv := counterToIV(5)
 	if got := hex.EncodeToString(iv[:]); got != sf.CounterToIv5 {
@@ -81,8 +77,6 @@ func TestSframeCounterIVAndHeader(t *testing.T) {
 // TestSframeEncryptMatchesKAT seeds the counter to the captured value and checks
 // the sealed frame against kats.json.
 func TestSframeEncryptMatchesKAT(t *testing.T) {
-	t.Skip("blocked: srtp/sframe bodies are stubs; enable when implemented")
-
 	k := loadKat(t)
 	sf := loadSframeFields(t)
 	callKey := mustHex(t, k.Inputs.CallKey)
@@ -104,8 +98,6 @@ func TestSframeEncryptMatchesKAT(t *testing.T) {
 // TestSframeEncryptDecryptRoundTrip confirms a frame the sender seals for the peer
 // decrypts back to the original plaintext on the receiver.
 func TestSframeEncryptDecryptRoundTrip(t *testing.T) {
-	t.Skip("blocked: srtp/sframe bodies are stubs; enable when implemented")
-
 	k := loadKat(t)
 	callKey := mustHex(t, k.Inputs.CallKey)
 	sender, err := NewSframeSession(callKey, k.Inputs.SelfLid, k.Inputs.PeerLid)
@@ -130,8 +122,6 @@ func TestSframeEncryptDecryptRoundTrip(t *testing.T) {
 // TestSframeWrongKeyDoesNotForge confirms GCM auth rejects a frame opened under the
 // wrong key: it must fail closed to plaintext, never emit a forged decryption.
 func TestSframeWrongKeyDoesNotForge(t *testing.T) {
-	t.Skip("blocked: srtp/sframe bodies are stubs; enable when implemented")
-
 	k := loadKat(t)
 	callKey := mustHex(t, k.Inputs.CallKey)
 	sender, err := NewSframeSession(callKey, k.Inputs.SelfLid, k.Inputs.PeerLid)
@@ -157,8 +147,6 @@ func TestSframeWrongKeyDoesNotForge(t *testing.T) {
 // TestSframePlainOpusPassesThrough confirms real plain-Opus frames classify as
 // plaintext pass-through (ok=false), so the caller uses the raw bytes unchanged.
 func TestSframePlainOpusPassesThrough(t *testing.T) {
-	t.Skip("blocked: srtp/sframe bodies are stubs; enable when implemented")
-
 	k := loadKat(t)
 	callKey := mustHex(t, k.Inputs.CallKey)
 	receiver, err := NewSframeSession(callKey, k.Inputs.SelfLid, k.Inputs.PeerLid)
