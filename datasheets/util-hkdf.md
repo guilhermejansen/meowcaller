@@ -13,14 +13,16 @@ extract-and-expand test cases (Test Case 1, 2, 3). Copy the chosen vectors into
 `util/testdata/` as a JSON file holding `IKM`, `salt`, `info`, `L`, and the
 expected `OKM` (all hex).
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (`wacore/src/voip/mod.rs`)
+
 ## Reference source (verbatim — authoritative)
 
 
 ```rust
-/// HKDF-SHA256 (extract with `salt`, expand with `info`) — the one KDF shape all of
-/// WhatsApp's VoIP key derivations reduce to. Mirrors the hand-rolled `hkdf`/`waSfuKdf`
-/// helpers in the TS source.
+/// HKDF-SHA256 (extract with `salt`, expand with `info`): the one KDF shape all of
+/// WhatsApp's VoIP key derivations reduce to.
 pub(crate) fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8], len: usize) -> Vec<u8> {
+    debug_assert!(len <= 255 * 32, "HKDF-SHA256 max output is 8160 bytes");
     let hk = Hkdf::<Sha256>::new(Some(salt), ikm);
     let mut okm = vec![0u8; len];
     hk.expand(info, &mut okm)
