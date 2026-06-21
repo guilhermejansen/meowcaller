@@ -50,7 +50,7 @@ func TestEncodeRoundTripsATone(t *testing.T) {
 		}
 	}
 	t.Logf("encode→decode round-trip best correlation: %.4f", best)
-	if best <= 0.5 {
-		t.Errorf("encode→decode round-trip correlation too low: %.4f", best)
+	if best <= 0.7 {
+		t.Errorf("encode→decode round-trip correlation too low: %.4f (want >0.7)", best)
 	}
 }

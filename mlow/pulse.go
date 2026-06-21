@@ -122,6 +122,11 @@ func DecodeSmplPulses(dec *RangeDecoder, mem *SmplMem, p2, p3, p4, p6, s1 int32)
 			split[2] = s2
 			split[3] = (total - sum) - s2
 		}
+		// C smpl_pulse_coding zeroes the whole split (and n_pulses) on a corrupt -1
+		// from either half, rather than copying the sentinel into res.Subfr.
+		if split[0] == -1 || split[2] == -1 {
+			split = [8]int32{}
+		}
 	}
 
 	take := p3

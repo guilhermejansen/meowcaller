@@ -7,6 +7,20 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### mlow — upstream sync (reference `ed12f35..41095d4`): robustness guards
+- Ported the two codec-behavioral fixes from the upstream review commit `543302e`
+  (everything else in the 9 new reference commits is non-behavioral — see below):
+  - `pulse.go`: zero the whole subframe split when either half's `smplSplit3537`
+    returns the corrupt `-1` sentinel (C `smpl_pulse_coding`), instead of copying
+    `-1` into `Subfr`.
+  - `vad.go`: reject a short capture buffer up front in `ProcessPacket` so the
+    fixed-stride frame loop can't index out of range.
+  - tightened `TestEncodeRoundTripsATone` to `> 0.7` (matches upstream; we get 0.89).
+- The other 8 upstream commits are non-behavioral for our port: a table-storage
+  refactor (seed ROM vs blob — same table values), per-frame perf (scratch reuse,
+  in-place CDF reads, FFT twiddle precompute — "codec output byte-identical"), typed
+  errors / dead-code, and test-vector regeneration + comment cleanup.
+
 ### tooling — `mlowtest` CLI + file test script
 - `cmd/mlowtest`: `encode` (raw s16le mono 16 kHz → MLow `.bin`) and `decode`
   (`.bin` → WAV, or `-raw` s16le). The `.bin` container is `"MLW1"` + per-frame
