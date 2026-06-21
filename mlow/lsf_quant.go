@@ -1,16 +1,7 @@
 package mlow
 
 import (
-	"bytes"
-	"compress/zlib"
-	_ "embed"
-	"io"
 	"math"
-	"sync"
-
-	"google.golang.org/protobuf/proto"
-
-	"github.com/purpshell/meowcaller/mlow/internal/tables"
 )
 
 // LSFCBCentroids is the number of stage-1 LSF codebook centroids. SmplLPCOrder
@@ -19,13 +10,6 @@ const LSFCBCentroids = 16
 
 const lsfQstepCondMult = 0.9
 const smplPi = float32(math.Pi)
-
-// smplLsfCbBlob is the LSF quantizer codebook as a zlib-compressed LsfCb protobuf —
-// the reference's byte-identical lsf_cb_dump.bin, embedded at the package root
-// (production asset, reference filename), mirroring smpl_cc_blob.bin / smpl_tables.bin.
-//
-//go:embed lsf_cb_dump.bin
-var smplLsfCbBlob []byte
 
 // LsfQuantResult is one LSF quantization: Qi[0] (=grid), Qi[1..16] (=stage2), and
 // the reconstructed quantized NLSF — the same envelope the decoder rebuilds.
@@ -70,108 +54,12 @@ type LsfCb struct {
 	MinDistUV []float32       // [17]
 }
 
-var (
-	lsfCbOnce sync.Once
-	lsfCb     *LsfCb
-)
-
-// LoadLsfCb inflates and protobuf-decodes the embedded LSF codebook once and
-// returns the shared, read-only set.
+// LoadLsfCb returns the LSF quantizer codebook, built from the embedded seed ROM
+// (lsf_seed.bin) and shared read-only.
 func LoadLsfCb() *LsfCb {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_lsf_quant.rs#L79-L85
-	lsfCbOnce.Do(func() {
-		zr, err := zlib.NewReader(bytes.NewReader(smplLsfCbBlob))
-		if err != nil {
-			panic("mlow: open lsf_cb blob: " + err.Error())
-		}
-		raw, err := io.ReadAll(zr)
-		if err != nil {
-			panic("mlow: inflate lsf_cb blob: " + err.Error())
-		}
-		_ = zr.Close()
-		var pb tables.LsfCb
-		if err := proto.Unmarshal(raw, &pb); err != nil {
-			panic("mlow: decode lsf_cb blob: " + err.Error())
-		}
-		lsfCb = pbToLsfCb(&pb)
-	})
-	return lsfCb
-}
-
-func f2ToGo(m *tables.F2) [][]float32 {
-	d := m.GetD()
-	out := make([][]float32, len(d))
-	for i, r := range d {
-		out[i] = r.GetV()
-	}
-	return out
-}
-
-func f3ToGo(m *tables.F3) [][][]float32 {
-	d := m.GetD()
-	out := make([][][]float32, len(d))
-	for i, r := range d {
-		out[i] = f2ToGo(r)
-	}
-	return out
-}
-
-func i4ToGo(m *tables.I4) [][][][]int32 {
-	d := m.GetD()
-	out := make([][][][]int32, len(d))
-	for i, l3 := range d {
-		o3 := make([][][]int32, len(l3.GetD()))
-		for j, l2 := range l3.GetD() {
-			o2 := make([][]int32, len(l2.GetD()))
-			for k, l1 := range l2.GetD() {
-				o2[k] = l1.GetV()
-			}
-			o3[j] = o2
-		}
-		out[i] = o3
-	}
-	return out
-}
-
-func pbToLsfCb(p *tables.LsfCb) *LsfCb {
-	cb := &LsfCb{
-		MinQi:     i4ToGo(p.GetMinQi()),
-		MaxQi:     i4ToGo(p.GetMaxQi()),
-		Qstep:     f2ToGo(p.GetQstep()),
-		MeanV:     p.GetMeanV(),
-		MeanUV:    p.GetMeanUv(),
-		RegCond:   p.GetRegCond(),
-		MinDistV:  p.GetMinDistV(),
-		MinDistUV: p.GetMinDistUv(),
-	}
-	for _, s := range p.GetSt1() {
-		cb.St1 = append(cb.St1, st1Tables{
-			Cbhalf:   f2ToGo(s.GetCbhalf()),
-			CInv:     f2ToGo(s.GetCInv()),
-			BitsCond: s.GetBitsCond(),
-			Rotcond:  f3ToGo(s.GetRotcond()),
-			CbCinv:   f2ToGo(s.GetCbCinv()),
-			We:       f3ToGo(s.GetWe()),
-			Bits:     s.GetBits(),
-			Wie:      f3ToGo(s.GetWie()),
-		})
-	}
-	for _, l1 := range p.GetSt2() {
-		var o1 [][]st2Tables
-		for _, l2 := range l1.GetD() {
-			var o2 []st2Tables
-			for _, s := range l2.GetD() {
-				o2 = append(o2, st2Tables{
-					NumQlvls: s.GetNumQlvls(),
-					Qlvls:    f2ToGo(s.GetQlvls()),
-					NumBits:  f2ToGo(s.GetNumBits()),
-				})
-			}
-			o1 = append(o1, o2)
-		}
-		cb.St2 = append(cb.St2, o1)
-	}
-	return cb
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/dbf10066a15f5c8c83c27908ad4284873331e1a4/wacore/src/voip/mlow/smpl_lsf_quant.rs#L117-L119 (seed rewire: build from lsf_seed.bin)
+	return loadLsfBuilt().cb
 }
 
 // ----- f32 scalar helpers (single-precision throughout: qi[] is decided by f32 comparisons) -----

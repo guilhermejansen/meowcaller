@@ -1,16 +1,7 @@
 package mlow
 
 import (
-	"bytes"
-	"compress/zlib"
-	_ "embed"
-	"io"
 	"math"
-	"sync"
-
-	"google.golang.org/protobuf/proto"
-
-	"github.com/purpshell/meowcaller/mlow/internal/tables"
 )
 
 // Low-band synthesis: NLSF reconstruction, NLSF→LPC, gain linearization, LTP/ACB
@@ -60,13 +51,6 @@ var smplFIR16 = [16]float32{
 	-0.0000063925981521606445,
 }
 
-// smplSynthTablesBlob is the runtime synthesis tables as a zlib-compressed
-// SmplSynthTables protobuf — the reference's byte-identical smpl_synth_tables.bin,
-// embedded at the package root (production asset, reference filename).
-//
-//go:embed smpl_synth_tables.bin
-var smplSynthTablesBlob []byte
-
 // --- NLSF reconstruction / synthesis tables ---
 
 // SmplSynthTables is the runtime synthesis table set (the smpl_synth_tables dump).
@@ -80,57 +64,12 @@ type SmplSynthTables struct {
 	Grid16Matrices [][][]float32 // [sig][config][256]
 }
 
-var (
-	smplSynthOnce   sync.Once
-	smplSynthTables *SmplSynthTables
-)
-
-// LoadSmplSynthTables decodes the embedded synthesis tables once and returns the shared set.
+// LoadSmplSynthTables returns the runtime synthesis tables, built from the embedded
+// seed ROM (lsf_seed.bin) and shared read-only.
 func LoadSmplSynthTables() *SmplSynthTables {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L97-L104
-	smplSynthOnce.Do(func() {
-		zr, err := zlib.NewReader(bytes.NewReader(smplSynthTablesBlob))
-		if err != nil {
-			panic("mlow: open synth table blob: " + err.Error())
-		}
-		raw, err := io.ReadAll(zr)
-		if err != nil {
-			panic("mlow: inflate synth table blob: " + err.Error())
-		}
-		_ = zr.Close()
-		var pb tables.SmplSynthTables
-		if err := proto.Unmarshal(raw, &pb); err != nil {
-			panic("mlow: decode synth table blob: " + err.Error())
-		}
-		smplSynthTables = &SmplSynthTables{
-			Valtables:      f5ToGo(pb.GetValtables()),
-			Centroids:      f3ToGo(pb.GetCentroids()),
-			Matrices:       f4ToGo(pb.GetMatrices()),
-			MinSpacing:     f2ToGo(pb.GetMinSpacing()),
-			Grid16W:        f2ToGo(pb.GetGrid16W()),
-			Grid16Alpha:    pb.GetGrid16Alpha(),
-			Grid16Matrices: f3ToGo(pb.GetGrid16Matrices()),
-		}
-	})
-	return smplSynthTables
-}
-
-func f4ToGo(m *tables.F4) [][][][]float32 {
-	d := m.GetD()
-	out := make([][][][]float32, len(d))
-	for i, r := range d {
-		out[i] = f3ToGo(r)
-	}
-	return out
-}
-
-func f5ToGo(m *tables.F5) [][][][][]float32 {
-	d := m.GetD()
-	out := make([][][][][]float32, len(d))
-	for i, r := range d {
-		out[i] = f4ToGo(r)
-	}
-	return out
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/dbf10066a15f5c8c83c27908ad4284873331e1a4/wacore/src/voip/mlow/smpl_synth.rs#L71-L73 (seed rewire: build from lsf_seed.bin)
+	return loadLsfBuilt().synth
 }
 
 // smplNLSFLaroiaWeights: inverse-gap weights w[k] = invgap[k] + invgap[k+1] (silk_NLSF_VQ_weights_laroia).

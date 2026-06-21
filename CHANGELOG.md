@@ -29,6 +29,26 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   (GCC/GNrg = 0). The ~102 KB `smpl_cc_blob.bin` is removed. All decode/encode KATs
   stay bit-exact (e2e decode corr 0.9867, byte-exact entropy, pitch contour, tone
   round-trip). Every new function carries its `// Source of truth:` pin.
+- **LSF seed wired + 3 LSF blobs dropped** (`lsf_seed.go`, port of `smpl_lsf_seed.rs`):
+  the 30 KB `lsf_seed.bin` expands into all three LSF runtime structs — `LsfCb`
+  (quantizer codebook), `SmplTables` (stage-1/2 decode CDFs), and `SmplSynthTables`
+  (decoder synthesis tables) — replacing `lsf_cb_dump.bin` (136 KB) +
+  `smpl_tables.bin` (20 KB) + `smpl_synth_tables.bin` (65 KB). The float expansion
+  is load-bearing: cInv symmetric fill, `matrix_mult_transp_16`, `laroia` →
+  sqrt-then-reciprocal `rot_apply_wght`, integer `dcmf_to_cmf`, scalar `unpack8`,
+  and the stage-2 flat-pointer walks (Qlvls/cmf/numBits, exactly `ST2_LEN`=9593).
+  **FMA hazard:** Go contracts `a*b + c` into a fused multiply-add on amd64/arm64
+  (one rounding), diverging 1 ULP from the reference's separate rounding; every
+  load-bearing product is wrapped in an explicit `float32(…)` conversion to force
+  the intermediate rounding. Validated against the reference's own golden `to_bits`
+  constants (bit-exact) and field-by-field against the old blobs: every int +
+  non-transcendental f32 **bit-identical**, sqrt-derived `we`/`wie`/`matrices`
+  within 3 ULP, log2-derived `bits`/`num_bits` within 1 ULP (matches the upstream
+  note). The seed-build intentionally trims two synth tables vs the pre-seed blob
+  (`valtables` width = `numQlvls`, `centroids` omits the never-read grid==16 row);
+  values bit-exact on every overlapping entry. `LoadLsfCb`/`LoadSmplTables`/
+  `LoadSmplSynthTables` now delegate to the seed builder; the protobuf blob loaders
+  and helpers are removed. Full decode/encode KAT suite stays bit-exact.
 
 ### mlow — upstream sync (reference `ed12f35..41095d4`): robustness guards
 - Ported the two codec-behavioral fixes from the upstream review commit `543302e`
