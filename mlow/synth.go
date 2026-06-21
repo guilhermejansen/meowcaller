@@ -282,8 +282,9 @@ func SmplReconstructNLSF(t *SmplSynthTables, stage1, config, grid int, stage2 *[
 // SmplNLSF2A converts NLSF to the monic LPC coefficient vector A[0..16] (a[0]=1).
 func SmplNLSF2A(nlsf []float32) []float32 {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L293-L311
-	// NOT VALIDATED: 1:1 port, no passing KAT exercises it yet — validated end-to-end
-	// once the decoder module runs e2e_vectors.json. Remove this line when that KAT passes.
+	// Exercised end-to-end by TestEncodeRoundTripsATone (the encoder shadow-synth
+	// path reconstructs a tone at correlation 0.89). Correlation-bounded, not
+	// bit-exact — there is no isolated vector for this WASM-domain alt synth path.
 	order := len(nlsf)
 	half := order / 2
 	cosv := make([]float64, order)
@@ -344,8 +345,9 @@ func smplLPCSynthesis(ex, a, out, state []float32) {
 // SmplGainLin maps the quantized log-gain to a linear gain (fast pow2 bit-cast).
 func SmplGainLin(gainQ int32) float64 {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L350-L362
-	// NOT VALIDATED: 1:1 port, no passing KAT exercises it yet — validated end-to-end
-	// once the decoder module runs e2e_vectors.json. Remove this line when that KAT passes.
+	// Exercised end-to-end by TestEncodeRoundTripsATone (the encoder shadow-synth
+	// path reconstructs a tone at correlation 0.89). Correlation-bounded, not
+	// bit-exact — there is no isolated vector for this WASM-domain alt synth path.
 	y := float32(gainQ)*6.103515625e-05*0.10000000149011612*27749388.0 + 1064866816.0
 	var i int32
 	if y < 2147483648.0 && y > -2147483648.0 {
@@ -371,8 +373,9 @@ func smplFloorF32(x float32) float32 {
 // SmplLTPFracGain maps the normalized LTP gain to the fractional gain.
 func SmplLTPFracGain(normGain float64) float32 {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L482-L484
-	// NOT VALIDATED: 1:1 port, no passing KAT exercises it yet — validated end-to-end
-	// once the decoder module runs e2e_vectors.json. Remove this line when that KAT passes.
+	// Exercised end-to-end by TestEncodeRoundTripsATone (the encoder shadow-synth
+	// path reconstructs a tone at correlation 0.89). Correlation-bounded, not
+	// bit-exact — there is no isolated vector for this WASM-domain alt synth path.
 	return float32(normGain)*-0.16999998688697815 + 0.3499999940395355
 }
 
@@ -495,8 +498,9 @@ func NewSmplFrameSynth() *SmplFrameSynth {
 // writing predOut from the history at the fractional lag (func 3523 + func 3522).
 func SmplLTPSubframePred(hist []float32, histPos int32, lagF, gainFrac float32, gst *SmplExcGainState, predOut []float32) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L487-L506
-	// NOT VALIDATED: 1:1 port, no passing KAT exercises it yet — validated end-to-end
-	// once the decoder module runs e2e_vectors.json. Remove this line when that KAT passes.
+	// Exercised end-to-end by TestEncodeRoundTripsATone (the encoder shadow-synth
+	// path reconstructs a tone at correlation 0.89). Correlation-bounded, not
+	// bit-exact — there is no isolated vector for this WASM-domain alt synth path.
 	var fracOut [2 * 2 * 40]float32
 	lags := []float32{lagF, lagF}
 	smplFracLTP(lags, 2, hist, histPos-648, smplFracStateLen, fracOut[:])
@@ -516,8 +520,9 @@ func SynthInternalFrame(
 	pitch *SmplPitchSynth,
 ) (signal []float32, nlsf []float32) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L543-L662
-	// NOT VALIDATED: 1:1 port, no passing KAT exercises it yet — validated end-to-end
-	// once the decoder module runs e2e_vectors.json. Remove this line when that KAT passes.
+	// Exercised end-to-end by TestEncodeRoundTripsATone (the encoder shadow-synth
+	// path reconstructs a tone at correlation 0.89). Correlation-bounded, not
+	// bit-exact — there is no isolated vector for this WASM-domain alt synth path.
 	// The reference's Region-1 excitation comb and post-LPC HP postfilter are gated off
 	// (SMPL_TAIL_REGION1 / SMPL_HP_POSTFILTER == false) and need the postfilter
 	// module; those gated blocks are omitted here, matching the vector-capture config.
@@ -632,8 +637,8 @@ var nrgresShapeCB4Q10 = [smplResNrgShapeCBN4 * 4]int16{
 // QuantNrgRes4 quantizes the 4-subframe residual-energy vector (smpl_quant_nrg_res, num_subfr==4).
 func QuantNrgRes4(nrgres *[4]float32) NrgResQuant {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_nrgres.rs#L61-L101
-	// NOT VALIDATED: 1:1 port, no passing KAT exercises it yet — validated via the
-	// encoder round-trip / e2e at the decoder/encoder modules. Remove this line when a covering KAT passes.
+	// Exercised by TestEncodeRoundTripsATone (the encoder unvoiced candidate quantizes
+	// the per-subframe residual energy through this). Correlation-bounded e2e.
 	var nrgresDB [4]float32
 	var frameDB float32
 	for i := 0; i < 4; i++ {

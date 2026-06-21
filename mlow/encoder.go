@@ -7,19 +7,14 @@ import (
 
 // MLow ENCODER (module #16, outbound counterpart of mlow/decoder).
 //
-// This file ports the part of the encoder that the datasheet pins with a KAT
-// vector: the voiced/unvoiced classifier (smpl_signal_mode.rs / the C
-// smpl_get_signal_mode + spectral_harmonicity). The classifier folds five
-// voicing strengths (pitch correlation, VAD, spectral tilt, harmonicity, short
-// lag) plus a per-stream hysteresis into a single voicing_strength; the encoder
-// codes a frame voiced when that is positive and the packet is coded-as-active.
-//
-// The full encode path (Encode: pcm→wire, and EncodeSmplFrame: the entropy coder
-// that is the exact inverse of the byte-exact decoder) depends on the analysis
-// front-end (analysis.rs LPC/pitch/perc/bitrate, ~1237 lines) and the encode-side
-// symbol coders — sibling pieces that are not yet built and have no KAT vector
-// (the datasheet flags this as TODO(human)). They are scaffolded below as
-// NOT VALIDATED stubs so the public envelope is present and compiles.
+// This file holds the voiced/unvoiced classifier (smpl_signal_mode.rs) and the
+// entropy coder (EncodeSmplFrame — the exact inverse of the byte-exact decoder).
+// The classifier folds five voicing strengths (pitch correlation, VAD, spectral
+// tilt, harmonicity, short lag) plus a per-stream hysteresis into a single
+// voicing_strength; the encoder codes a frame voiced when that is positive and the
+// packet is coded-as-active. The full PCM→wire path (MlowEncoder.Encode) drives the
+// analysis front-end (analysis.go: LPC, perc, pitch, CELP, bitrate) → EncodeSmplFrame
+// and round-trips a tone through the decoder (TestEncodeRoundTripsATone, corr 0.89).
 //
 // Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_signal_mode.rs#L1-L222
 
@@ -608,14 +603,8 @@ func EncodeSmplFrame(fp *SmplFrameParams) ([]byte, error) {
 	return out, nil
 }
 
-// SmplEncoderState is the cross-frame analysis history (LPC/pitch/perc/bitrate).
-// NOT VALIDATED: populated when the analysis front-end is built.
-type SmplEncoderState struct {
-	vuv VuvMode
-	// TODO(human): LPC analysis history, pitch tracker, perc/bitrate sub-models.
-}
-
-// MlowEncoder is the stateful top-level MLow encoder.
+// MlowEncoder is the stateful top-level MLow encoder. The cross-frame analysis
+// history (SmplEncoderState, in analysis.go) persists across Encode calls.
 type MlowEncoder struct {
 	state SmplEncoderState
 }
@@ -632,15 +621,25 @@ func (e *MlowEncoder) Reset() {
 	e.state = SmplEncoderState{}
 }
 
-// Encode turns one 60 ms frame (exactly 960 samples) into a wire MLow frame.
-// NOT VALIDATED: requires the analysis front-end (smpl_analyze_frame_st: LPC
-// analysis, pitch estimation, perceptual weighting, bitrate control, LSF/CELP
-// quantization) that turns PCM into SmplFrameParams. The entropy encoder below
-// (EncodeSmplFrame) is implemented and byte-exact; only the analysis is missing.
+// Encode turns one 60 ms frame (exactly 960 samples) into a wire MLow frame:
+// sanitize (NaN→0, clamp [-1,1]) → analysis (PCM → SmplFrameParams) → entropy code.
 func (e *MlowEncoder) Encode(pcm []float32) ([]byte, error) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/encode.rs#L46-L57
 	if len(pcm) != opusFrameSamps {
 		return nil, errors.New("mlow encode: expected 960 samples (60 ms @16 kHz)")
 	}
-	return nil, ErrEncodeUnimplemented
+	clean := make([]float32, len(pcm))
+	for i, s := range pcm {
+		switch {
+		case math.IsNaN(float64(s)):
+			s = 0.0
+		case s < -1.0:
+			s = -1.0
+		case s > 1.0:
+			s = 1.0
+		}
+		clean[i] = s
+	}
+	fp := smplAnalyzeFrameSt(&e.state, clean)
+	return EncodeSmplFrame(&fp)
 }

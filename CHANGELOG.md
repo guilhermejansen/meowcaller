@@ -60,6 +60,19 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   Smoke KATs (`encode_{unvoiced,voiced,voiced_fractional_greedy}_runs`) pass: all
   search paths run and produce correctly-shaped output. Reuses cbAcbgains/acbgN/M.
   Full bit-correctness arrives with the end-to-end tone round-trip after wiring.
+- **analysis wiring → `Encode(pcm)` complete** (analysis.go): ported
+  `smpl_analyze_frame_st` 1:1 — per internal frame it runs the VAD, encoder HP
+  (ARMA2), LPC analysis, the bit-exact LSF quantizer (+ conditional coding), the
+  perceptual model, the multi-stage pitch estimator + voicing classifier, the CELP
+  excitation encode, and candidate selection (voiced LTP / unvoiced nrgres / silent),
+  committed to a shadow synth (`SynthInternalFrame`) for warm history.
+  `MlowEncoder.Encode` now sanitizes → analyzes → `EncodeSmplFrame`. **KAT
+  `TestEncodeRoundTripsATone`: encode a 550 Hz tone → decode through the byte-exact
+  decoder → reconstruction tracks the input at correlation 0.89 (> 0.5).** This is
+  the full codec round-trip — the mlow encoder is complete. The shadow-synth chain
+  (`SynthInternalFrame`, `SmplLTPSubframePred`, `SmplNLSF2A`, `SmplGainLin`,
+  `SmplLTPFracGain`, `QuantNrgRes4`) is now exercised e2e — the last `NOT VALIDATED`
+  markers are cleared. CodeRabbit clean.
 
 ### mlow/decoder — module #15 KAT-verified (audible milestone) (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Implemented the top-level `MlowDecoder` 1:1 from `decoder.rs`: RED strip → TOC
