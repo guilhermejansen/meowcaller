@@ -14,7 +14,9 @@ import (
 	"github.com/purpshell/meowcaller/signaling"
 	"go.mau.fi/whatsmeow"
 	waBinary "go.mau.fi/whatsmeow/binary"
+	"go.mau.fi/whatsmeow/proto/waCompanionReg"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -33,6 +35,13 @@ const meowcallerDBPath = "meowcaller.db"
 // client. busy_timeout absorbs brief lock contention so a busy session doesn't
 // error out with "database is locked".
 func connectClient(ctx context.Context) (*whatsmeow.Client, error) {
+	// Present as a Google Chrome web client. The connection already advertises the
+	// WEB platform; these companion props make the linked-device entry read
+	// "Google Chrome (Mac OS)" instead of the default. DeviceProps is read at
+	// pairing time, so re-pair for an already-linked device to pick this up.
+	store.DeviceProps.Os = proto.String("Mac OS")
+	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_CHROME.Enum()
+
 	container, err := sqlstore.New(ctx, "sqlite", "file:wa-voip.db?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", waLog.Stdout("db", "WARN", true))
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
