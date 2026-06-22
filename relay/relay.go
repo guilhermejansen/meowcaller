@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"crypto/tls"
 	"fmt"
 	"net"
 
@@ -135,10 +134,10 @@ func ConnectRelayMedia(relayAddr *net.UDPAddr) (*RelayMediaChannel, error) {
 	if err != nil {
 		return fail(fmt.Errorf("dtls self-signed cert: %w", err))
 	}
-	dtlsConn, err := dtls.Client(udp, relayAddr, &dtls.Config{
-		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
-	})
+	dtlsConn, err := dtls.ClientWithOptions(udp, relayAddr,
+		dtls.WithCertificates(cert),
+		dtls.WithInsecureSkipVerify(true),
+	)
 	if err != nil {
 		return fail(fmt.Errorf("dtls handshake: %w", err))
 	}
