@@ -42,6 +42,9 @@ func connectClient(ctx context.Context) (*whatsmeow.Client, error) {
 		return nil, fmt.Errorf("load device: %w", err)
 	}
 	client := whatsmeow.NewClient(device, waLog.Stdout("wa", "DEBUG", true))
+	// whatsmeow drops <ack> nodes; the outbound call's relay allocation rides in
+	// <ack class="call">. Install the interceptor before Connect.
+	installCallAckHook(client)
 
 	if client.Store.ID == nil {
 		qr, _ := client.GetQRChannel(ctx)
@@ -257,6 +260,7 @@ func runCall(ctx context.Context, target string) error {
 	// Pre-seed the media coordinator with our generated callKey, then bring up media
 	// when the relay endpoint arrives (relaylatency/transport) after the peer accepts.
 	coord := newCoordinator(ctx, cli, store)
+	setCallAckHandler(coord.onCallAck)
 	m := coord.entry(callID)
 	m.callKey = callKey[:]
 	m.selfLID = self.String()
@@ -401,6 +405,22 @@ func (c *coordinator) onRelay(callID string, data *waBinary.Node) {
 	c.maybeStart(callID, m)
 }
 
+// onCallAck handles an <ack class="call"> node. For an outbound offer the relay
+// allocation arrives here (whatsmeow otherwise drops the ack), which is what lets
+// the caller bring up media.
+func (c *coordinator) onCallAck(ack *waBinary.Node) {
+	r := findRelay(ack)
+	if r == nil {
+		return
+	}
+	callID := r.AttrGetter().String("call-id")
+	if callID == "" {
+		return
+	}
+	log.Printf("📥 relay allocation arrived in call ack for %s", callID)
+	c.onRelay(callID, ack)
+}
+
 // onTerminate records a call's end in the meowcaller store.
 func (c *coordinator) onTerminate(callID string) {
 	if c.store == nil {
@@ -443,6 +463,7 @@ func runListen(ctx context.Context, autoAccept bool) error {
 		log.Printf("meowcaller store: %s (%d call(s) recorded), separate from whatsmeow's wa-voip.db", meowcallerDBPath, n)
 	}
 	coord := newCoordinator(ctx, cli, store)
+	setCallAckHandler(coord.onCallAck)
 
 	cli.AddEventHandler(func(evt any) {
 		switch e := evt.(type) {
