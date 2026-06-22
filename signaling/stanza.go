@@ -1,6 +1,8 @@
 package signaling
 
 import (
+	"strconv"
+
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 )
@@ -19,10 +21,7 @@ var CapabilityPreaccept = []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x07}
 // EncodeLatency is the relay latency wire encoding: 0x2000000 + rttMs.
 func EncodeLatency(rttMs uint32) string {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L17-L19
-	// TODO
-	// agent suggestion: strconv.FormatUint(uint64(0x02000000+rttMs), 10) (uint32 add already wraps).
-	// human input:
-	return ""
+	return strconv.FormatUint(uint64(0x02000000+rttMs), 10)
 }
 
 // OfferDeviceKey is one per-device encrypted callKey entry inside <offer>.
@@ -35,8 +34,8 @@ type OfferDeviceKey struct {
 // OfferParams are the inputs to BuildOffer.
 type OfferParams struct {
 	CallID         string
-	To             *types.JID
-	CallCreator    *types.JID
+	To             types.JID
+	CallCreator    types.JID
 	DeviceKeys     []OfferDeviceKey
 	PrivacyToken   []byte // nil = absent
 	Capability     []byte // nil = absent
@@ -48,18 +47,46 @@ type OfferParams struct {
 // destination|enc → encopt → device-identity.
 func BuildOffer(p *OfferParams) waBinary.Node {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L42-L100
-	// TODO
-	// agent suggestion: append children in source order; >1 device key emits <destination> of <to><enc>,
-	// else a bare <enc>; wrap with offerAction("offer", …) and callWrap(to, nil, …).
-	// human input:
-	return waBinary.Node{}
+	var children []waBinary.Node
+	if p.PrivacyToken != nil {
+		children = append(children, waBinary.Node{Tag: "privacy", Content: p.PrivacyToken})
+	}
+	children = append(children, audioOpus("8000"), audioOpus("16000"))
+	children = append(children, waBinary.Node{Tag: "net", Attrs: waBinary.Attrs{"medium": "3"}})
+	if p.Capability != nil {
+		children = append(children, waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: p.Capability})
+	}
+	if len(p.DeviceKeys) > 1 {
+		tos := make([]waBinary.Node, len(p.DeviceKeys))
+		for i, dk := range p.DeviceKeys {
+			tos[i] = waBinary.Node{Tag: "to", Attrs: waBinary.Attrs{"jid": dk.DeviceJid}, Content: []waBinary.Node{encNode(dk)}}
+		}
+		children = append(children, waBinary.Node{Tag: "destination", Content: tos})
+	} else if len(p.DeviceKeys) == 1 {
+		children = append(children, encNode(p.DeviceKeys[0]))
+	}
+	children = append(children, waBinary.Node{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}})
+	if p.DeviceIdentity != nil {
+		children = append(children, waBinary.Node{Tag: "device-identity", Content: p.DeviceIdentity})
+	}
+	return callWrap(p.To, nil, offerAction("offer", p.CallID, p.CallCreator, children))
+}
+
+// encNode builds one <enc v=2 type=… count=0> child carrying the ciphertext.
+func encNode(dk OfferDeviceKey) waBinary.Node {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L101-L108
+	return waBinary.Node{
+		Tag:     "enc",
+		Attrs:   waBinary.Attrs{"v": "2", "type": dk.EncType, "count": "0"},
+		Content: dk.Ciphertext,
+	}
 }
 
 // AcceptParams are the inputs to BuildAccept.
 type AcceptParams struct {
 	CallID       string
-	To           *types.JID
-	CallCreator  *types.JID
+	To           types.JID
+	CallCreator  types.JID
 	AudioRates   []string
 	RelayTe      []byte // nil = absent
 	Rte          []byte // nil = absent
@@ -71,29 +98,51 @@ type AcceptParams struct {
 // [capability] → [rte] → [voip_settings].
 func BuildAccept(p *AcceptParams) waBinary.Node {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L124-L162
-	// TODO
-	// agent suggestion: audio children from AudioRates; optional te(priority=2); net medium=2; encopt;
-	// optional capability/rte/voip_settings; offerAction("accept", …) + callWrap.
-	// human input:
-	return waBinary.Node{}
+	children := make([]waBinary.Node, 0, len(p.AudioRates)+5)
+	for _, rate := range p.AudioRates {
+		children = append(children, audioOpus(rate))
+	}
+	if p.RelayTe != nil {
+		children = append(children, waBinary.Node{Tag: "te", Attrs: waBinary.Attrs{"priority": "2"}, Content: p.RelayTe})
+	}
+	children = append(children, waBinary.Node{Tag: "net", Attrs: waBinary.Attrs{"medium": "2"}})
+	children = append(children, waBinary.Node{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}})
+	if p.Capability != nil {
+		children = append(children, waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: p.Capability})
+	}
+	if p.Rte != nil {
+		children = append(children, waBinary.Node{Tag: "rte", Content: p.Rte})
+	}
+	if p.VoipSettings != nil {
+		children = append(children, waBinary.Node{Tag: "voip_settings", Attrs: waBinary.Attrs{"uncompressed": "1"}, Content: p.VoipSettings})
+	}
+	return callWrap(p.To, nil, offerAction("accept", p.CallID, p.CallCreator, children))
+}
+
+// audioOpus builds one <audio enc=opus rate=…> advertisement child.
+func audioOpus(rate string) waBinary.Node {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L163-L169
+	return waBinary.Node{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": rate}}
 }
 
 // BuildPreaccept builds <preaccept>: audio → encopt → capability(preaccept blob),
 // wrapped with the random wrapper id.
-func BuildPreaccept(callID string, to, callCreator *types.JID, wrapperID string, audioRates []string) waBinary.Node {
+func BuildPreaccept(callID string, to, callCreator types.JID, wrapperID string, audioRates []string) waBinary.Node {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L171-L201
-	// TODO
-	// agent suggestion: audio children; encopt keygen=2; capability ver=1 bytes=CapabilityPreaccept;
-	// offerAction("preaccept", …) + callWrap(to, &wrapperID, …).
-	// human input:
-	return waBinary.Node{}
+	children := make([]waBinary.Node, 0, len(audioRates)+2)
+	for _, rate := range audioRates {
+		children = append(children, audioOpus(rate))
+	}
+	children = append(children, waBinary.Node{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}})
+	children = append(children, waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: CapabilityPreaccept})
+	return callWrap(to, &wrapperID, offerAction("preaccept", callID, callCreator, children))
 }
 
 // TransportParams are the inputs to BuildTransport.
 type TransportParams struct {
 	CallID               string
-	To                   *types.JID
-	CallCreator          *types.JID
+	To                   types.JID
+	CallCreator          types.JID
 	P2PCandRound         *string // nil = absent
 	TransportMessageType *string // nil = absent
 	RelayTe              []byte  // nil = absent
@@ -103,18 +152,30 @@ type TransportParams struct {
 // <net medium=2 [protocol=0]> (protocol omitted only when type == "9").
 func BuildTransport(p *TransportParams) waBinary.Node {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L203-L243
-	// TODO
-	// agent suggestion: transport action with call-id/call-creator + optional p2p-cand-round/
-	// transport-message-type; optional te(priority=1); net medium=2 with protocol=0 unless type=="9".
-	// human input:
-	return waBinary.Node{}
+	attrs := waBinary.Attrs{"call-id": p.CallID, "call-creator": p.CallCreator}
+	if p.P2PCandRound != nil {
+		attrs["p2p-cand-round"] = *p.P2PCandRound
+	}
+	if p.TransportMessageType != nil {
+		attrs["transport-message-type"] = *p.TransportMessageType
+	}
+	var children []waBinary.Node
+	if p.RelayTe != nil {
+		children = append(children, waBinary.Node{Tag: "te", Attrs: waBinary.Attrs{"priority": "1"}, Content: p.RelayTe})
+	}
+	netAttrs := waBinary.Attrs{"medium": "2"}
+	if p.TransportMessageType == nil || *p.TransportMessageType != "9" {
+		netAttrs["protocol"] = "0"
+	}
+	children = append(children, waBinary.Node{Tag: "net", Attrs: netAttrs})
+	return callWrap(p.To, nil, waBinary.Node{Tag: "transport", Attrs: attrs, Content: children})
 }
 
 // RelayLatencyParams are the inputs to BuildRelayLatency.
 type RelayLatencyParams struct {
 	CallID       string
-	To           *types.JID
-	CallCreator  *types.JID
+	To           types.JID
+	CallCreator  types.JID
 	LatencyMs    uint32
 	RelayName    string
 	AddressBytes []byte
@@ -125,28 +186,33 @@ type RelayLatencyParams struct {
 // optional <destination>.
 func BuildRelayLatency(p *RelayLatencyParams) waBinary.Node {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L244-L262
-	// TODO
-	// agent suggestion: te with latency=EncodeLatency(LatencyMs), relay_name, bytes=AddressBytes;
-	// optional destinationTo(Devices); offerAction("relaylatency", …) + callWrap.
-	// human input:
-	return waBinary.Node{}
+	children := []waBinary.Node{{
+		Tag:     "te",
+		Attrs:   waBinary.Attrs{"latency": EncodeLatency(p.LatencyMs), "relay_name": p.RelayName},
+		Content: p.AddressBytes,
+	}}
+	if len(p.Devices) > 0 {
+		children = append(children, destinationTo(p.Devices))
+	}
+	return callWrap(p.To, nil, offerAction("relaylatency", p.CallID, p.CallCreator, children))
 }
 
 // BuildHeartbeat builds <call to={callID}@call id=…><heartbeat …/></call>.
-func BuildHeartbeat(callID string, callCreator *types.JID, wrapperID string) waBinary.Node {
+func BuildHeartbeat(callID string, callCreator types.JID, wrapperID string) waBinary.Node {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L263-L283
-	// TODO
-	// agent suggestion: heartbeat action with call-id/call-creator; outer call with to=callID+"@call",
-	// id=wrapperID, content=[action].
-	// human input:
-	return waBinary.Node{}
+	action := waBinary.Node{Tag: "heartbeat", Attrs: waBinary.Attrs{"call-id": callID, "call-creator": callCreator}}
+	return waBinary.Node{
+		Tag:     "call",
+		Attrs:   waBinary.Attrs{"to": callID + "@call", "id": wrapperID},
+		Content: []waBinary.Node{action},
+	}
 }
 
 // TerminateParams are the inputs to BuildTerminate.
 type TerminateParams struct {
 	CallID        string
-	To            *types.JID
-	CallCreator   *types.JID
+	To            types.JID
+	CallCreator   types.JID
 	Reason        *string // nil = absent
 	TargetDevices []types.JID
 }
@@ -154,27 +220,58 @@ type TerminateParams struct {
 // BuildTerminate builds <terminate> with optional reason and target <destination>.
 func BuildTerminate(p *TerminateParams) waBinary.Node {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L284-L296
-	// TODO
-	// agent suggestion: terminate action with call-id/call-creator + optional reason; if TargetDevices
-	// non-empty add destinationTo; callWrap.
-	// human input:
-	return waBinary.Node{}
+	attrs := waBinary.Attrs{"call-id": p.CallID, "call-creator": p.CallCreator}
+	if p.Reason != nil {
+		attrs["reason"] = *p.Reason
+	}
+	var content []waBinary.Node
+	if len(p.TargetDevices) > 0 {
+		content = []waBinary.Node{destinationTo(p.TargetDevices)}
+	}
+	return callWrap(p.To, nil, waBinary.Node{Tag: "terminate", Attrs: attrs, Content: content})
 }
 
 // BuildMuteV2 builds <mute_v2 call-id call-creator mute-state>.
-func BuildMuteV2(callID string, to, callCreator *types.JID, muteState string) waBinary.Node {
+func BuildMuteV2(callID string, to, callCreator types.JID, muteState string) waBinary.Node {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L297-L305
-	// TODO
-	// agent suggestion: mute_v2 action with call-id/call-creator/mute-state; callWrap(to, nil, action).
-	// human input:
-	return waBinary.Node{}
+	action := waBinary.Node{Tag: "mute_v2", Attrs: waBinary.Attrs{"call-id": callID, "call-creator": callCreator, "mute-state": muteState}}
+	return callWrap(to, nil, action)
 }
 
 // BuildReject builds <reject call-id call-creator>.
-func BuildReject(callID string, to, callCreator *types.JID) waBinary.Node {
+func BuildReject(callID string, to, callCreator types.JID) waBinary.Node {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L306-L316
-	// TODO
-	// agent suggestion: reject action with call-id/call-creator; callWrap(to, nil, action).
-	// human input:
-	return waBinary.Node{}
+	action := waBinary.Node{Tag: "reject", Attrs: waBinary.Attrs{"call-id": callID, "call-creator": callCreator}}
+	return callWrap(to, nil, action)
+}
+
+// offerAction builds an action node (offer/accept/preaccept/relaylatency) carrying
+// call-id + call-creator and the given children.
+func offerAction(tag, callID string, callCreator types.JID, children []waBinary.Node) waBinary.Node {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L317-L324
+	return waBinary.Node{
+		Tag:     tag,
+		Attrs:   waBinary.Attrs{"call-id": callID, "call-creator": callCreator},
+		Content: children,
+	}
+}
+
+// destinationTo builds <destination> wrapping one <to jid=…> per device.
+func destinationTo(devices []types.JID) waBinary.Node {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L325-L332
+	tos := make([]waBinary.Node, len(devices))
+	for i, jid := range devices {
+		tos[i] = waBinary.Node{Tag: "to", Attrs: waBinary.Attrs{"jid": jid}}
+	}
+	return waBinary.Node{Tag: "destination", Content: tos}
+}
+
+// callWrap wraps an action in <call to=… [id=…]>.
+func callWrap(to types.JID, id *string, action waBinary.Node) waBinary.Node {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L333-L341
+	attrs := waBinary.Attrs{"to": to}
+	if id != nil {
+		attrs["id"] = *id
+	}
+	return waBinary.Node{Tag: "call", Attrs: attrs, Content: []waBinary.Node{action}}
 }

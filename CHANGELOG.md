@@ -7,6 +7,20 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### signaling/stanza — module #25 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+- New `signaling` package porting `stanza.rs`: the call-control builders
+  (`BuildOffer`/`Accept`/`Preaccept`/`Transport`/`RelayLatency`/`Heartbeat`/
+  `Terminate`/`MuteV2`/`Reject`) + `EncodeLatency` + the capability blobs. Built on
+  **whatsmeow's** `binary.Node` + `types.JID` (adopted by human decision; `go.mau.fi/whatsmeow`
+  is now a direct dep — PLAN.md dependency policy amended accordingly). whatsmeow has
+  no fluent `NodeBuilder`, so builders construct `Node` structs directly; JID params
+  are passed **by value** (`types.JID`) — the reference's `&Jid` is always present, and
+  value semantics avoid a nil-deref panic while keeping pure-builder signatures (no
+  `error`). The load-bearing `<offer>` child order and the transport `protocol=0`
+  (omitted only for type "9") rule are preserved. KAT (inline, mirrors the reference's
+  six child-order/attr tests — synthetic LIDs, no PII) passes. CodeRabbit: clean
+  (one nil-deref finding fixed by the value-JID change). **KAT-verified.**
+
 ### srtp/warp — module #24 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
 - Complete the `srtp/warp` module: `WarpExtProfile`/`WarpAudioPiggybackExt`/
   `WarpMITagLen` constants, `AudioPiggybackExtensionFor` (now implemented — fills the

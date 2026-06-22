@@ -580,10 +580,21 @@ mod tests {
 
 ## Go envelope (signatures only)
 
+> **Binding note:** by human decision this is built on **whatsmeow's** `binary`
+> (`waBinary.Node{Tag, Attrs, Content}` — no fluent `NodeBuilder`, so the builders
+> construct `Node` structs directly) and `types.JID`. JID params are passed **by
+> value** (`types.JID`, not `*types.JID`): the reference's `&Jid` is always present,
+> and value semantics avoid a nil-deref panic while keeping the pure-builder
+> signatures (no `error` return). The signatures below show the original `meowcaller/binary`
+> sketch; the implemented surface uses `waBinary.Node` / `types.JID` accordingly.
+
 ```go
 package signaling
 
-import "meowcaller/binary" // Jid, Node, NodeBuilder
+import (
+	waBinary "go.mau.fi/whatsmeow/binary"
+	"go.mau.fi/whatsmeow/types"
+)
 
 // CapabilityOffer is the capability blob for <offer>/<accept> (ver=1).
 var CapabilityOffer = [7]byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x13}
