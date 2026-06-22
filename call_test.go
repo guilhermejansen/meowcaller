@@ -22,8 +22,6 @@ func isCancelled(ctx context.Context) bool {
 
 // TestInsertTransitionRemove pins the registry bookkeeping contract.
 func TestInsertTransitionRemove(t *testing.T) {
-	t.Skip("blocked: call registry bodies are stubs; enable when implemented")
-
 	reg := NewCallRegistry()
 	if !reg.Insert(regSession("CID")) {
 		t.Fatal("first insert should succeed")
@@ -56,8 +54,6 @@ func TestInsertTransitionRemove(t *testing.T) {
 
 // TestRemoveCancelsMediaTask confirms Remove cancels the call's media task.
 func TestRemoveCancelsMediaTask(t *testing.T) {
-	t.Skip("blocked: call registry bodies are stubs; enable when implemented")
-
 	reg := NewCallRegistry()
 	reg.Insert(regSession("A"))
 	ctx, cancel := context.WithCancel(context.Background())
@@ -72,8 +68,6 @@ func TestRemoveCancelsMediaTask(t *testing.T) {
 
 // TestAbortAllCancelsMediaTasks confirms AbortAll cancels every task and empties the registry.
 func TestAbortAllCancelsMediaTasks(t *testing.T) {
-	t.Skip("blocked: call registry bodies are stubs; enable when implemented")
-
 	reg := NewCallRegistry()
 	reg.Insert(regSession("A"))
 	reg.Insert(regSession("B"))
@@ -94,8 +88,6 @@ func TestAbortAllCancelsMediaTasks(t *testing.T) {
 
 // TestReplaceCancelsOldMediaTask confirms a replacing SetMediaTask cancels the prior handle.
 func TestReplaceCancelsOldMediaTask(t *testing.T) {
-	t.Skip("blocked: call registry bodies are stubs; enable when implemented")
-
 	reg := NewCallRegistry()
 	reg.Insert(regSession("A"))
 	oldCtx, oldCancel := context.WithCancel(context.Background())
@@ -116,8 +108,6 @@ func TestReplaceCancelsOldMediaTask(t *testing.T) {
 
 // TestSetMediaTaskOnUnknownCallCancels confirms an orphan handle is cancelled immediately.
 func TestSetMediaTaskOnUnknownCallCancels(t *testing.T) {
-	t.Skip("blocked: call registry bodies are stubs; enable when implemented")
-
 	reg := NewCallRegistry()
 	ctx, cancel := context.WithCancel(context.Background())
 	reg.SetMediaTask("GONE", cancel) // never inserted
