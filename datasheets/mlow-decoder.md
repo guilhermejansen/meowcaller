@@ -10,20 +10,23 @@ real captured wire frames (hex, one per line) decoded end-to-end and compared
 against the reference PCM. This is the integration milestone (no single isolated
 vector). Copy both verbatim into `mlow/testdata/`.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (`wacore/src/voip/mlow/decoder.rs`, `wacore/src/voip/mlow/params.rs`, `wacore/src/voip/mlow/param_decode_match.rs`)
+
 ## Reference source (verbatim — authoritative)
 
 
 ### `decoder.rs`
 
 ```rust
-//! MLow top-level decoder: RED strip → TOC routing → active-frame decode (3 chained 20 ms internal
-//! frames: LSF → pulses → pitch/gains → CELP synthesis) → 60 ms PCM. The bitstream parse is pinned
-//! against the WASM; the synthesis (`smpl_celpdec`) is a faithful port of the smpl_opus C decoder
-//! (excitation in the codec's float domain + gen_noise + LPC synthesis). The cross-frame predictor
-//! and synthesis history persist across calls because the stream is continuous.
+//! MLow top-level decoder: RED strip -> TOC routing -> active-frame decode (3 chained 20 ms internal
+//! frames: LSF -> pulses -> pitch/gains -> CELP synthesis) -> 60 ms PCM. The synthesis
+//! (`smpl_celpdec`) runs the excitation in the codec's float domain (gen_noise + LPC synthesis). The
+//! cross-frame predictor and synthesis history persist across calls because the stream is
+//! continuous.
 
 use super::rangecoder::RangeDecoder;
 use super::red::depack_split_red;
+use super::smpl_cc_tables::load_cc_tables;
 use super::smpl_celpdec::CelpDecParams;
 use super::smpl_decode::{decode_smpl_lsf, load_smpl_tables};
 use super::smpl_gains::decode_smpl_gains;
@@ -42,6 +45,11 @@ const OPUS_FRAME_SAMPS: usize = 960; // 60 ms @ 16 kHz
 pub struct MlowDecoder {
     state: SmplDecoderState,
     redundancy: i32,
+    /// Sticky: set whenever the inner range decoder raised its error flag during any decode. That flag
+    /// reflects a degenerate decode table, not arbitrary frame corruption (over-reads return zero
+    /// silently), so it does not detect a tampered payload. Read via `had_error`. Diagnostic only,
+    /// never gates output.
+    had_error: bool,
 }
 
 impl Default for MlowDecoder {
@@ -55,7 +63,16 @@ impl MlowDecoder {
         MlowDecoder {
             state: SmplDecoderState::default(),
             redundancy: 0,
+            had_error: false,
         }
+    }
+
+    /// Whether any decode since construction (or `reset`) raised the range decoder's error flag (a
+    /// degenerate decode table). It does not flag a corrupted payload, which the decoder absorbs.
+    /// Diagnostic only; consumed by the regression suites, so it is gated to test builds.
+    #[cfg(test)]
+    pub(crate) fn had_error(&self) -> bool {
+        self.had_error
     }
 
     /// Set the negotiated RED redundancy level (0 = bare frames, the common case).
@@ -66,6 +83,7 @@ impl MlowDecoder {
     /// Clear the cross-frame state (call at a stream discontinuity).
     pub fn reset(&mut self) {
         self.state = SmplDecoderState::default();
+        self.had_error = false;
     }
 
     /// Decode one RTP MLow payload into a 60 ms (960-sample) PCM frame, float in [-1, 1].
@@ -75,11 +93,12 @@ impl MlowDecoder {
         }
         if self.redundancy > 0 {
             return match depack_split_red(payload) {
-                // the main (current) frame is last; copy it out before the borrow ends.
-                Ok(frames) => {
-                    let main = frames.last().map(|f| f.data.to_vec()).unwrap_or_default();
-                    self.decode_frame(&main)
-                }
+                // the main (current) frame is last; its slice borrows `payload`, not `self`, so it
+                // can drive the decode directly (no copy).
+                Ok(frames) => match frames.last() {
+                    Some(main) => self.decode_frame(main.data),
+                    None => self.decode_frame(&[]),
+                },
                 Err(e) => {
                     log::warn!("mlow RED depacketization failed: {e:?}");
                     vec![0.0; OPUS_FRAME_SAMPS]
@@ -121,6 +140,7 @@ impl MlowDecoder {
         let tbl = load_smpl_tables();
         let synth_t = load_smpl_synth_tables();
         let mem = load_smpl_mem();
+        let cc = load_cc_tables();
         let mut dec = RangeDecoder::new(&frame[1..]);
 
         // The low_rate bit of the smpl TOC (this capture is low_rate==0; the synth gates on it).
@@ -135,7 +155,7 @@ impl MlowDecoder {
             let lsf = decode_smpl_lsf(&mut dec, tbl, &mut self.state.lstate, config, f);
             let pulses = decode_smpl_pulses(
                 &mut dec,
-                mem,
+                cc,
                 SMPL_INTF_LEN as i32,
                 4,
                 1,
@@ -156,6 +176,7 @@ impl MlowDecoder {
                 let pr = decode_smpl_pitch(
                     &mut dec,
                     mem,
+                    cc,
                     &mut self.state.lstate,
                     SMPL_INTF_LEN as i32,
                     4,
@@ -173,9 +194,9 @@ impl MlowDecoder {
                     params.fcbg_idx[sf] = pr.filt_idx[sf].max(0);
                 }
             } else {
-                let g = decode_smpl_gains(&mut dec, mem, 4, pulses.subfr);
-                // D5: the Rust gains decode reads the same bits as the C decode_lb_unvoiced; gain_q is
-                // the C nrgres_dbq_Q14 and nrg_res is the C fcbg_idx (validated bit-exact).
+                let g = decode_smpl_gains(&mut dec, cc, 4, pulses.subfr);
+                // The unvoiced gains decode yields gain_q (the nrgres_dbq_Q14 field) and nrg_res (the
+                // fcbg_idx field).
                 params.nrgres_dbq_q14 = g.gain_q;
                 params.fcbg_idx = g.nrg_res;
             }
@@ -219,19 +240,23 @@ impl MlowDecoder {
             avg_norm_br / 3.0,
         );
 
-        // The C-domain synthesis output is already float in [-1, 1].
-        let mut pcm: Vec<f32> = out.iter().map(|&v| v.clamp(-1.0, 1.0)).collect();
-        if out_len > 0 && out_len != pcm.len() {
-            pcm.resize(out_len, 0.0);
+        // The C-domain synthesis output is already float in [-1, 1]; clamp in place.
+        for v in &mut out {
+            *v = v.clamp(-1.0, 1.0);
+        }
+        if out_len > 0 && out_len != out.len() {
+            out.resize(out_len, 0.0);
         }
         if dec.err != 0 {
-            log::warn!("mlow: range-coder error after active-frame decode (parse desync)");
+            // Sticky flag for `had_error`; does not alter `out` (the frame still plays).
+            self.had_error = true;
+            log::warn!("mlow: range decoder raised its error flag after active-frame decode");
         }
         log::debug!(
             "mlow: active frame decoded -> {} samples (config={config})",
-            pcm.len()
+            out.len()
         );
-        pcm
+        out
     }
 }
 
@@ -242,20 +267,21 @@ pub(crate) struct DiagParam {
     pub(crate) frame: usize,
     pub(crate) sf: usize,
     pub(crate) voiced: bool,
-    /// Rust `gain_q` — equals the C `nrgres_dbq_Q14` (validated bit-exact).
+    /// The `gain_q` value, i.e. the `nrgres_dbq_Q14` field.
     pub(crate) nrgres_dbq_q14: i32,
-    /// Rust per-subframe `nrg_res` / voiced `filt_idx` symbol — equals the C `fcbg_idx`.
+    /// The per-subframe `nrg_res` / voiced `filt_idx` symbol, i.e. the `fcbg_idx` field.
     pub(crate) fcbg_idx: i32,
 }
 
 /// Re-run the active-frame decode over the capture and capture per-subframe unvoiced params, keyed
-/// by (packet, frame, sf), to compare against the instrumented-C dump.
+/// by (packet, frame, sf), to compare against the reference dump (see testdata/PROVENANCE.md).
 #[cfg(test)]
 pub(crate) fn diag_decode_params() -> Vec<DiagParam> {
     let frames: Vec<String> =
         serde_json::from_str(include_str!("testdata/inbound_capture_frames.json")).unwrap();
     let tbl = load_smpl_tables();
     let mem = load_smpl_mem();
+    let cc = load_cc_tables();
     let mut lstate = super::smpl_decode::SmplLsfState::default();
     let mut out = Vec::new();
     for (packet, hex_frame) in frames.iter().enumerate() {
@@ -273,7 +299,7 @@ pub(crate) fn diag_decode_params() -> Vec<DiagParam> {
             let lsf = decode_smpl_lsf(&mut dec, tbl, &mut lstate, config, f);
             let pulses = decode_smpl_pulses(
                 &mut dec,
-                mem,
+                cc,
                 SMPL_INTF_LEN as i32,
                 4,
                 1,
@@ -284,6 +310,7 @@ pub(crate) fn diag_decode_params() -> Vec<DiagParam> {
                 let pr = decode_smpl_pitch(
                     &mut dec,
                     mem,
+                    cc,
                     &mut lstate,
                     SMPL_INTF_LEN as i32,
                     4,
@@ -301,7 +328,7 @@ pub(crate) fn diag_decode_params() -> Vec<DiagParam> {
                     });
                 }
             } else {
-                let g = decode_smpl_gains(&mut dec, mem, 4, pulses.subfr);
+                let g = decode_smpl_gains(&mut dec, cc, 4, pulses.subfr);
                 for sf in 0..4 {
                     out.push(DiagParam {
                         packet,
@@ -322,15 +349,14 @@ pub(crate) fn diag_decode_params() -> Vec<DiagParam> {
 mod tests {
     use super::*;
 
-    // End-to-end: decode the whole capture and compare against the libopus `useSmpl` reference
-    // (`ref_usesmpl_expected.raw`, the real smpl_opus codec, validated bit-exact vs the WASM).
+    // End-to-end: decode the whole capture and compare against the reference output
+    // (`ref_usesmpl_expected.raw`; see testdata/PROVENANCE.md).
     //
-    // The previous version validated against the Go reference (`e2e_vectors.json`), but that decode
-    // was proven wrong: it used the int16-domain `*nrgres` excitation with no shaped noise (the Go
-    // tail-off bug), and correlates ~0 with the real codec. The faithful target is the C useSmpl
-    // output. With the per-block voiced ACB/LTP lags, the HP postfilter, and the harmonic postfilter
-    // (which emits the codec's SMPL_TOT_POSTFILT_DELAY = 48-sample group delay) all in place, the
-    // decode now aligns sample-for-sample at lag 0.
+    // An earlier target (`e2e_vectors.json`) was proven wrong: it used the int16-domain `*nrgres`
+    // excitation with no shaped noise (a tail-off bug) and correlates ~0 with the true codec. With
+    // the per-block voiced ACB/LTP lags, the HP postfilter, and the harmonic postfilter (which emits
+    // the SMPL_TOT_POSTFILT_DELAY = 48-sample group delay) all in place, the decode now aligns
+    // sample-for-sample at lag 0.
     #[test]
     fn e2e_decode_matches_usesmpl() {
         let frames: Vec<String> =
@@ -364,10 +390,96 @@ mod tests {
             syy += dz * dz;
         }
         let corr = sxy / (sxx * syy).sqrt();
+        assert!(corr > 0.95, "lag-0 corr {corr:.4} vs reference");
+    }
+
+    // R2 (fuzz no-panic): the decoder is fed adversarial inputs and must neither panic nor over-emit.
+    // Corpus: a deterministic LCG of random byte vectors, plus every capture frame with each single
+    // byte flipped and each prefix truncation. The contract is purely structural (no panic, bounded
+    // output); the range decoder absorbs corruption by returning zero, so `had_error` is not asserted.
+    //
+    // Output length is data-driven by the TOC: `sample_rate/1000 * frame_ms`, where the TOC fields
+    // span {16,32} kHz and {10,20,60,120} ms. The hard ceiling is therefore 32 * 120 = 3840 samples,
+    // not the 960 of a common 60 ms / 16 kHz frame; a fuzzed TOC can legitimately declare a larger
+    // frame, which the decoder fills with silence on the SID/inactive/std-opus paths.
+    #[test]
+    fn fuzz_decode_no_panic_bounded_output() {
+        const MAX_SAMPS: usize = 32 * 120; // max sample_rate(kHz) * max frame_ms across all TOCs
+        let mut dec = MlowDecoder::new();
+        let check = |dec: &mut MlowDecoder, input: &[u8]| {
+            let out = dec.decode(input);
+            assert!(
+                out.len() <= MAX_SAMPS,
+                "decode emitted {} > {MAX_SAMPS} samples for input len {}",
+                out.len(),
+                input.len()
+            );
+        };
+
+        // Deterministic LCG (numerical-recipes constants) over thousands of random-length buffers.
+        let mut seed: u32 = 0x1234_5678;
+        let next = |s: &mut u32| {
+            *s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+            *s
+        };
+        for _ in 0..8000 {
+            let len = (next(&mut seed) % 400) as usize;
+            let mut buf = Vec::with_capacity(len);
+            for _ in 0..len {
+                buf.push((next(&mut seed) >> 24) as u8);
+            }
+            check(&mut dec, &buf);
+        }
+
+        // Mutations of the real capture frames: every single-byte flip and every truncation.
+        let frames: Vec<String> =
+            serde_json::from_str(include_str!("testdata/inbound_capture_frames.json"))
+                .expect("inbound_capture_frames.json");
+        for hex_frame in &frames {
+            let frame = hex::decode(hex_frame).unwrap();
+            for i in 0..frame.len() {
+                for bit in 0..8 {
+                    let mut m = frame.clone();
+                    m[i] ^= 1 << bit;
+                    check(&mut dec, &m);
+                }
+                check(&mut dec, &frame[..i]); // truncation at every prefix length
+            }
+            check(&mut dec, &frame);
+        }
+    }
+
+    // R7 (RED round-trip): a bare frame wrapped in a 1-redundant SplitRed envelope must decode to the
+    // exact same PCM as the bare frame at redundancy 0. Exercises the `redundancy > 0` strip path
+    // (which forwards the main/last frame) end-to-end.
+    #[test]
+    fn red_envelope_decodes_to_bare_main() {
+        let frames: Vec<String> =
+            serde_json::from_str(include_str!("testdata/inbound_capture_frames.json"))
+                .expect("inbound_capture_frames.json");
+        let bare = hex::decode(&frames[0]).unwrap();
+
+        let mut bare_dec = MlowDecoder::new();
+        let bare_out = bare_dec.decode(&bare);
+
+        // SplitRed N=1: red_hdr [0x80 | tc, size], main_marker (high bit clear), red payload, main.
+        // The main (last) frame is the bare frame, so the strip path must reproduce `bare_out`.
+        let red_payload = [0xAAu8, 0xBB];
+        let mut env = vec![0x80u8, red_payload.len() as u8, 0x00];
+        env.extend_from_slice(&red_payload);
+        env.extend_from_slice(&bare);
+
+        let mut red_dec = MlowDecoder::new();
+        red_dec.set_redundancy(1);
+        let red_out = red_dec.decode(&env);
+
+        assert_eq!(
+            red_out, bare_out,
+            "RED-wrapped main differs from bare decode"
+        );
         assert!(
-            corr > 0.95,
-            "lag-0 corr {corr:.4} vs useSmpl reference (was 0.31 before the gen_noise/domain port, \
-             0.66 before the per-block lags + postfilters)"
+            !red_dec.had_error(),
+            "RED decode raised the range decoder error flag"
         );
     }
 }
@@ -377,9 +489,8 @@ mod tests {
 
 ```rust
 //! Encoder-facing per-frame parameters: the structured output of the analysis, consumed by the
-//! entropy encoder. Ported from the Go reference (`smpl_params.go`). The pulse/pitch blocks also
-//! carry the raw entropy symbols the encoder replays (the structured counts alone are lossy w.r.t.
-//! the exact bitstream).
+//! entropy encoder. The pulse/pitch blocks also carry the raw entropy symbols the encoder replays
+//! (the structured counts alone are lossy w.r.t. the exact bitstream).
 
 #[derive(Default, Clone)]
 pub(crate) struct SmplLsfParams {
@@ -418,23 +529,18 @@ pub(crate) struct SmplGainParams {
 pub(crate) struct SmplPitchParams {
     pub gain_idx: [i32; 4],
     pub filt_idx: [i32; 4],
-    pub lag_abs_sym: i32,
-    pub lag_delta_sym: i32,
-    pub lag_ref_sym: i32,
-    pub lag: i32,
-    pub contour: i32,
-    pub fine_read: bool,
-    pub fine_sym: i32,
-    pub frac_syms: Vec<i32>,
+    /// The estimator's chosen contour (`blockseg_idx`) and per-40-block lag indices (`laginds`, 8
+    /// entries). These ARE the wire pitch encoding: `smpl_encode_lags` writes the blockseg selector +
+    /// the per-block (uniform-first / delta) lag indices straight from them, so the decoder rebuilds
+    /// the full per-block contour instead of a flattened single lag.
+    pub blockseg_idx: usize,
+    pub laginds: [i32; 8],
 }
 
 #[derive(Default, Clone)]
 pub(crate) struct SmplInternalParams {
     pub lsf: SmplLsfParams,
     pub pulses: SmplPulseParams,
-    #[allow(dead_code)]
-    pub has_pitch: bool,
-    #[allow(dead_code)]
     pub pitch: SmplPitchParams,
     pub gains: SmplGainParams,
 }
@@ -450,12 +556,12 @@ pub(crate) struct SmplFrameParams {
 ### `param_decode_match.rs`
 
 ```rust
-//! T1: validate that the Rust unvoiced/voiced parameter decode produces the SAME per-subframe
-//! `nrgres_dbq_Q14` and `fcbg_idx` as the smpl_opus C reference (`gennoise_params_dump.json`).
+//! Invariant: the Rust unvoiced/voiced parameter decode produces the SAME per-subframe
+//! `nrgres_dbq_Q14` and `fcbg_idx` as the reference (`gennoise_params_dump.json`).
 //!
-//! The Rust gains decode (`decode_smpl_gains`) reads the same bits as the C `decode_lb_unvoiced`,
-//! just under different field names: its `gain_q` IS the C `nrgres_dbq_Q14` and its per-subframe
-//! `nrg_res` symbol IS the C `fcbg_idx`. The voiced FCB gain index is the pitch block's `filt_idx`.
+//! The Rust gains decode (`decode_smpl_gains`) reads the same bits as the reference unvoiced decode,
+//! just under different field names: its `gain_q` IS the `nrgres_dbq_Q14` and its per-subframe
+//! `nrg_res` symbol IS the `fcbg_idx`. The voiced FCB gain index is the pitch block's `filt_idx`.
 //! This test pins that correspondence exactly so the excitation/gen_noise inputs stay faithful.
 #![cfg(test)]
 
@@ -499,7 +605,7 @@ fn nrgres_fcbg_match_c_reference() {
         );
         voiced_class += 1;
         if cv {
-            // Voiced: the FCB gain index (filt_idx) must match the C fcbg_idx where pulses exist.
+            // Voiced: the FCB gain index (filt_idx) must match the reference fcbg_idx where pulses exist.
             if cnp > 0 {
                 assert_eq!(
                     r.fcbg_idx,

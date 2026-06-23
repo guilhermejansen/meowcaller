@@ -11,6 +11,8 @@ feeds. Copy it verbatim into `mlow/testdata/`. (The reference's own tests in thi
 module additionally read `lsf_quant_io.json` and `fe_dump.json` from the same
 `mlow/testdata/`.)
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (`wacore/src/voip/mlow/smpl_lpc.rs, smpl_perc.rs`)
+
 ## Reference source (verbatim — authoritative)
 
 ```rust

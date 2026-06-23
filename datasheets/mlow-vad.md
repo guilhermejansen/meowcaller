@@ -14,6 +14,8 @@ int16 input PCM at 16 kHz, 320 samples per internal frame.
 and `cav`). Copy both `vad_ground_truth.json` and `mic_clip.raw` verbatim into
 `mlow/testdata/`.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (`wacore/src/voip/mlow/smpl_vad.rs`)
+
 ## Reference source (verbatim — authoritative)
 
 ```rust

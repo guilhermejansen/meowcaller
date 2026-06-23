@@ -13,6 +13,8 @@ bare frame and this layer must not run.
 tests: one redundant block plus main, header-only (no redundant) plus main, empty
 packet, and the rejection of a bare high-bit-set frame.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (`wacore/src/voip/mlow/red.rs`)
+
 ## Reference source (verbatim — authoritative)
 
 

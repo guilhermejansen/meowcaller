@@ -11,6 +11,8 @@ per-position magnitudes, and the signs. Media layer (codec decode pipeline).
 **Validation vector:** `pulse_vectors.json` — per-subframe pulse counts and the full
 signed pulse vector this module must reproduce. Copy it verbatim into `mlow/testdata/`.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (`wacore/src/voip/mlow/smpl_pulse.rs`)
+
 ## Reference source (verbatim — authoritative)
 
 ```rust

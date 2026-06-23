@@ -13,6 +13,17 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   items were datasheet staleness, a provable CDF-accessor equivalence (#16 LR
   filt), and one genuine stub (#20). Fixes below.
 
+### datasheets — pin + refresh all mlow datasheets to 41095d4
+- All 16 mlow datasheets (#01–#16) now carry the `Reference pinned at:
+  41095d4e6ba4610e054e9ede3af1d5e88a83faee` line. 8 had current verbatim and only
+  needed the pin (rangecoder, toc, lpc, pulse, gains, lsf_quant, vad, red); 8 had
+  drift and were refreshed to byte-identical current reference source: lsf, mem
+  (smpl_mem seed-build + table relocated to silk_lsf_cos_tab.rs), noise (perc FFT
+  twiddle restructure), decoder (had_error flag + cc args, params reshape),
+  encoder (MlowError + cc args + seed pitch loader), postfilter, pitch, synth
+  (smpl_nrgres comment cleanup). Documentation hygiene only — no behavior changed;
+  the Go was already KAT-verified against the current reference.
+
 ### srtp/sframe — implement DeriveWarpAuthKey (#20, KAT-verified)
 - Ported `derive_warp_auth_key`: `len==32` guard then HKDF-SHA256(empty salt, ikm
   = callKey, info = "warp auth key", 32). Was a `(nil,nil)` stub. Added a KAT

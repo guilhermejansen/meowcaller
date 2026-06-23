@@ -11,6 +11,8 @@ quantized spectrum the decoder rebuilds. Media layer (codec parameter coding).
 **Validation vector:** `lsf_quant_io.json` — the indices `qi[]` and reconstructed
 `qlsf[]` this module must match bit-for-bit. Copy it verbatim into `mlow/testdata/`.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (`wacore/src/voip/mlow/smpl_lsf_quant.rs`)
+
 ## Reference source (verbatim — authoritative)
 
 ```rust

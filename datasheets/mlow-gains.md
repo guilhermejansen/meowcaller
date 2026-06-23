@@ -12,6 +12,8 @@ Media layer (codec decode pipeline).
 `nrg_res[]` this module must reproduce byte-exact. Copy it verbatim into
 `mlow/testdata/`.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (`wacore/src/voip/mlow/smpl_gains.rs`)
+
 ## Reference source (verbatim — authoritative)
 
 ```rust

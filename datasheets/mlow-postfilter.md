@@ -13,6 +13,8 @@ layer; the synthesis tail that shapes pitch harmonics in the decoded PCM.
 verbatim into `mlow/testdata/`. (The two comb filters additionally pin against the
 raw C dumps `hp_postfilter_vectors.raw` and `harm_postfilter_vectors.raw`.)
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (`wacore/src/voip/mlow/smpl_postfilter.rs, smpl_harm_postfilter.rs, smpl_harmcomb.rs`)
+
 ## Reference source (verbatim — authoritative)
 
 `smpl_postfilter.rs`:
@@ -21,10 +23,9 @@ raw C dumps `hp_postfilter_vectors.raw` and `harm_postfilter_vectors.raw`.)
 //! MLow excitation-domain HARMONIC COMB POSTFILTER (WASM func 3524 + leaf helpers). Applied per
 //! subframe to the LB excitation BEFORE LPC synthesis (Region 1 of func 3597); its output is ADDED
 //! back into the excitation. Derives a short pitch-resonant 2nd-order filter from the excitation's
-//! own 3-lag autocorrelation (NOT the pitch lag), then resonates env-shaped noise through it. Ported
-//! from the Go reference (`smpl_postfilter.go`); the comb resonance shape is bit-exact. The Go found
-//! a single unresolved `8/7` output scalar vs the WASM export — we validate the composed output
-//! against the real decoder instead of hardcoding it.
+//! own 3-lag autocorrelation (NOT the pitch lag), then resonates env-shaped noise through it. The
+//! comb resonance shape is bit-exact. A single `8/7` output scalar vs the WASM export stays
+//! unresolved, so we validate the composed output against the real decoder instead of hardcoding it.
 #![allow(
     clippy::needless_range_loop,
     clippy::excessive_precision,
@@ -466,15 +467,13 @@ pub(crate) fn smpl_comb_postfilter(
 `smpl_harm_postfilter.rs`:
 
 ```rust
-//! MLow harmonic postfilter (`smpl_harm_postfilter`) — the final per-packet pitch-comb that runs on
-//! the full LB output after the HP postfilter. Faithful port of `smpl_harm_postfilter.c` (the LP
-//! filter table) + `smpl_harm_postfilter_util.c` (the apply loop). It enhances pitch harmonics by
-//! mixing `x[-lag] + x[+lag]` into the signal, low-pass filtered by a lag-dependent kernel, and it
-//! introduces the codec's `SMPL_TOT_POSTFILT_DELAY = 48`-sample group delay (8 FB + 40 lag-subframe).
+//! MLow harmonic postfilter: the final per-packet pitch-comb that runs on the full LB output after
+//! the HP postfilter. It enhances pitch harmonics by mixing `x[-lag] + x[+lag]` into the signal,
+//! low-pass filtered by a lag-dependent kernel, and it introduces the codec's
+//! `SMPL_TOT_POSTFILT_DELAY = 48`-sample group delay (8 FB + 40 lag-subframe).
 //!
 //! The reference is built with `-ffast-math -mavx`, so the recursive/accumulating math is not
-//! IEEE-strict; the Rust port matches it to within i16 output quantization (validated against a C
-//! dump), not bit-for-bit.
+//! IEEE-strict; this matches it to within i16 output quantization, not bit-for-bit.
 #![allow(clippy::needless_range_loop)]
 
 use std::sync::OnceLock;
@@ -508,8 +507,7 @@ fn lag_to_filt_ix(lag: i32) -> usize {
     (LP_FILT_RES / (lag + 30).max(80) - LP_FILT_RES / MAX_PITCH_LAG) as usize
 }
 
-/// LP-filter bank, one symmetric `2*FB_DELAY+1`-tap kernel per quantized lag bucket
-/// (`smpl_create_harm_postfilt_tables`).
+/// LP-filter bank, one symmetric `2*FB_DELAY+1`-tap kernel per quantized lag bucket.
 struct HarmTables {
     lp_filters: Vec<[f32; 2 * FB_DELAY + 1]>,
 }
@@ -557,7 +555,7 @@ fn create_lp_filter(omega0: f32, filt_win: &[f32; FB_DELAY], blp: &mut [f32; 2 *
     }
 }
 
-/// Persistent harm-postfilter state (C `HarmPst`). `prev_lag = 0` after init (first packet's lag).
+/// Persistent harm-postfilter state. `prev_lag = 0` after init (first packet's lag).
 #[derive(Clone)]
 pub(crate) struct HarmPostfilterState {
     state1: [f32; 2 * FB_DELAY],
@@ -597,8 +595,8 @@ fn nrg(x: &[f32], n: usize) -> f32 {
     r
 }
 
-/// `smpl_filt_ma16_sym`: 17-tap symmetric MA. `x` has 16 samples of history at `x[-16..0]`; here it
-/// reads from a base offset into the shared buffer.
+/// 17-tap symmetric MA. `x` has 16 samples of history at `x[-16..0]`; here it reads from a base offset
+/// into the shared buffer.
 #[inline]
 fn filt_ma16_sym(buf: &[f32], x_base: usize, n: usize, coef: &[f32; 17], out: &mut [f32]) {
     for nn in 0..n {
@@ -611,11 +609,11 @@ fn filt_ma16_sym(buf: &[f32], x_base: usize, n: usize, coef: &[f32; 17], out: &m
     }
 }
 
-/// `harm_postfilter_core` for one 40-sample lag block. `comb` is the StateComb buffer; `comb_x` is
-/// the index of this block's read pointer (`x` in C). `out`/`out_off` is the caller's destination
-/// (`y_harm` in C) — it doubles as scratch and holds the final block output. The filtered result is
-/// also fed back into `comb[comb_x - FB_DELAY ..]`, which is what makes the comb recursive and is the
-/// 48-sample-delayed location the next packets read from.
+/// Core filter for one 40-sample lag block. `comb` is the StateComb buffer; `comb_x` is the index of
+/// this block's read pointer. `out`/`out_off` is the caller's `y_harm` destination; it doubles as
+/// scratch and holds the final block output. The filtered result is also fed back into
+/// `comb[comb_x - FB_DELAY ..]`, which is what makes the comb recursive and is the 48-sample-delayed
+/// location the next packets read from.
 #[allow(clippy::too_many_arguments)]
 fn harm_postfilter_core(
     lpcoefs: &mut [f32; 2 * FB_DELAY + 1],
@@ -634,7 +632,7 @@ fn harm_postfilter_core(
     let tables = harm_tables();
     let lag_u = lag as usize;
     let mut xy = 0.0f32;
-    // y_harm scratch lives in `out[out_off..out_off+l]` (the C `y_harm` parameter).
+    // y_harm scratch lives in `out[out_off..out_off+l]`.
     if lag > 0 {
         let lookforward = l as i32 + lag - future_samples;
         if lookforward > 0 {
@@ -663,7 +661,7 @@ fn harm_postfilter_core(
         for i in 0..l {
             out[out_off + i] *= 0.5 * strength;
         }
-        // diff = -strength * x + y_harm  (smpl_add_scale_vec(y_harm, x, diff, L, -strength))
+        // diff = -strength * x + y_harm
         for i in 0..l {
             diff[diff_base + i] = out[out_off + i] + (-strength) * comb[comb_x + i];
         }
@@ -673,7 +671,7 @@ fn harm_postfilter_core(
         }
         let coef17: [f32; 17] = *lpcoefs;
         // y_harm = MA(diff); then y_harm += comb[x - FB_DELAY] (the 48-delayed base signal). The comb
-        // is read-only here — `smpl_add_vec_inplace(x - FB_DELAY, y_harm, L)` modifies y_harm (2nd arg).
+        // is read-only here; only y_harm is modified.
         let mut yh = [0f32; LAG_SUBFR_LEN];
         filt_ma16_sym(diff, diff_base, l, &coef17, &mut yh);
         for i in 0..l {
@@ -716,7 +714,7 @@ pub(crate) fn smpl_harm_postfilter(
     normalized_bitrate: f32,
 ) {
     debug_assert_eq!(x_len, n_lags * LAG_SUBFR_LEN);
-    // diff buffer with 16 samples of history prefix (C: diff_[FRAME_LEN + 2*FB_DELAY], diff = +2*FB_DELAY).
+    // diff buffer with 16 samples of history prefix: backing is FRAME_LEN + 2*FB_DELAY, diff starts at +2*FB_DELAY.
     const DIFF_PREFIX: usize = 2 * FB_DELAY;
     let mut diff = vec![0f32; FRAME_LEN + DIFF_PREFIX];
 
@@ -781,15 +779,15 @@ mod tests {
         v
     }
 
-    /// Validate `smpl_harm_postfilter` against the instrumented C decoder, processing the full active
-    /// packet sequence in order (the filter carries StateComb/state1/prev_lag across packets). The
-    /// dump carries, per packet, the per-block lags, the packet bitrate, the input (post-hp) signal,
-    /// and the C output.
+    /// Validate `smpl_harm_postfilter` against the instrumented reference decoder, processing the full
+    /// active packet sequence in order (the filter carries StateComb/state1/prev_lag across packets).
+    /// The dump carries, per packet, the per-block lags, the packet bitrate, the input (post-hp)
+    /// signal, and the reference output.
     ///
     /// The reference is `-ffast-math` (reassociating/FMA-contracting), so this is not bit-for-bit.
     /// Two regimes: every voiced packet and every steady silence packet match within the i16 output
     /// quantization step (the comb math is feed-forward there). The only larger residual is the first
-    /// 48 samples of a *silence packet immediately following voiced* — the comb's zero-input response,
+    /// 48 samples of a *silence packet immediately following voiced*: the comb's zero-input response,
     /// driven recursively by the prior frame's `-ffast-math`-built LP coefficients. That residual is
     /// bounded by `TRANSITION_TOL` and only lands on near-silent transitions, so it is inaudible.
     #[test]
@@ -833,12 +831,12 @@ mod tests {
             }
         }
         eprintln!(
-            "harm_postfilter vs C: packets={count} worst={worst:.2e} worst_steady={worst_steady:.2e} \
+            "harm_postfilter vs reference: packets={count} worst={worst:.2e} worst_steady={worst_steady:.2e} \
              (i16 LSB={I16_LSB:.2e})"
         );
         assert!(
             worst_steady < I16_LSB,
-            "harm_postfilter steady-state diverges from C by {worst_steady:.2e} (>= i16 LSB {I16_LSB:.2e})"
+            "harm_postfilter steady-state diverges from reference by {worst_steady:.2e} (>= i16 LSB {I16_LSB:.2e})"
         );
         assert!(
             worst < TRANSITION_TOL,
@@ -851,16 +849,13 @@ mod tests {
 `smpl_harmcomb.rs`:
 
 ```rust
-//! MLow HP (harmonic/pitch) postfilter — the post-LPC-synthesis comb that resonates the output at the
-//! PITCH frequency. Ported from the C source (`smpl_postfilter_util.c::smpl_hp_postfilter` +
-//! `smpl_calc_hp_coefs.c` + `smpl_postfilter.c::get_hp_pitch_coefs`). Structure per frame:
+//! MLow HP (harmonic/pitch) postfilter: the post-LPC-synthesis comb that resonates the output at the
+//! PITCH frequency. Structure per frame:
 //!   de-emphasis (AR1 leaky integrator {1,-0.995}) -> ARMA2 comb (MA2 numerator + AR2 denominator,
 //!   coefficients derived from the pitch lag f=1/lag) -> companion pre-emphasis (MA1 differentiator).
 //!
-//! This replaces an earlier reverse-engineered "spectral-tilt resonator keyed on the band energy
-//! ratio". That RE had two bugs the real source disproves: the comb keys on the PITCH LAG (f=1/lag),
-//! not an energy ratio, and the AR denominator radius factor uses the `arr` curve (negative -> stable
-//! pole), which the RE had swapped with `arf` (positive -> unstable). The constants themselves matched.
+//! The comb keys on the PITCH LAG (f=1/lag), not an energy ratio, and the AR denominator radius factor
+//! uses the `arr` curve (negative -> stable pole), not `arf` (positive -> unstable).
 #![allow(clippy::needless_range_loop, clippy::excessive_precision)]
 
 use std::sync::OnceLock;
@@ -869,11 +864,11 @@ use std::sync::OnceLock;
 /// pre-emphasis (differentiator). The comb is bracketed by these.
 const LO_EMPH: [f32; 2] = [1.0, -0.995];
 
-/// 1.2 dB peak voiced pitch-comb curve (`get_hp_pitch_coefs`): maf, arf (cos angle), arr (radius).
+/// 1.2 dB peak voiced pitch-comb curve: maf, arf (cos angle), arr (radius).
 const HP_PITCH_MAF: f32 = 0.1;
 const HP_PITCH_ARF: [f32; 2] = [0.608057355, 0.070939485];
 const HP_PITCH_ARR: [f32; 2] = [-2.187380512, 2.291030664];
-/// Default (lag<=0) curve (`smpl_get_hp_coefs`), corner 50 Hz -> f = 50/16000.
+/// Default (lag<=0) curve, corner 50 Hz -> f = 50/16000.
 const HP_DEF_MAF: f32 = 0.1;
 const HP_DEF_ARF: [f32; 2] = [0.728508218, 0.476039848];
 const HP_DEF_ARR: [f32; 2] = [-4.363803713, 8.441854006];
@@ -884,16 +879,22 @@ const LAG_CHANGE_THRESHOLD: f32 = 1.25;
 const FRAME_LEN: usize = 320;
 const HP_POSTF_TRANSITION_SPEED: f32 = 2.0;
 
-/// Persistent HP-postfilter state (C `HpPst`). `lag_old < 0` marks a fresh/reset filter.
+/// Persistent HP-postfilter state. `lag_old < 0` marks a fresh/reset filter.
+/// `scratch_*` are per-frame working buffers hoisted off the hot path; each is fully overwritten
+/// (`[..n]`) before it is read, so they carry no state between frames.
 #[derive(Clone)]
 pub(crate) struct HpPostfilterState {
     state_lo_emph1: f32,
     state_lo_emph2: f32,
     state_hp: [f32; 4], // [ma2 x[-1], ma2 x[-2], ar2 y[-1], ar2 y[-2]]
     lag_old: f32,
-    x_old: Vec<f32>,
+    x_old: [f32; FRAME_LEN],
     coef_ma: [f32; 3],
     coef_ar: [f32; 3],
+    scratch_x: [f32; FRAME_LEN],
+    scratch_y_old: [f32; FRAME_LEN],
+    scratch_y_tmp: [f32; FRAME_LEN],
+    scratch_dummy: [f32; FRAME_LEN],
 }
 
 impl Default for HpPostfilterState {
@@ -903,21 +904,25 @@ impl Default for HpPostfilterState {
             state_lo_emph2: 0.0,
             state_hp: [0.0; 4],
             lag_old: -1.0,
-            x_old: vec![0.0; FRAME_LEN],
+            x_old: [0.0; FRAME_LEN],
             coef_ma: [0.0; 3],
             coef_ar: [0.0; 3],
+            scratch_x: [0.0; FRAME_LEN],
+            scratch_y_old: [0.0; FRAME_LEN],
+            scratch_y_tmp: [0.0; FRAME_LEN],
+            scratch_dummy: [0.0; FRAME_LEN],
         }
     }
 }
 
-/// `cos_approx(x) = 1 - 0.5*x^2` (the source's small-angle cosine).
+/// Small-angle cosine `cos_approx(x) = 1 - 0.5*x^2`.
 #[inline]
 fn cos_approx(x: f32) -> f32 {
     1.0 - 0.5 * x * x
 }
 
-/// 3-tap FIR with carried 2-sample input history (`smpl_filt_ma2`, general/monic). Also reused by the
-/// excitation postfilter (comb #1).
+/// 3-tap FIR with carried 2-sample input history (general/monic). Also reused by the excitation
+/// postfilter (comb #1).
 pub(crate) fn smpl_pf_fir3(
     input: &[f32],
     n: usize,
@@ -947,9 +952,9 @@ pub(crate) fn smpl_pf_fir3(
     }
 }
 
-/// 2nd-order all-pole `y[n] = in[n] - c1*y[n-1] - c2*y[n-2]` (`smpl_filt_ar2`, monic), state {y[-1],y[-2]}.
-/// Replicates the C scalar 4-wide unrolled block (precomputed coefficient powers) verbatim so the
-/// floating-point rounding is bit-exact with `smpl_filt.c` (the codec was built without NEON).
+/// 2nd-order all-pole `y[n] = in[n] - c1*y[n-1] - c2*y[n-2]` (monic), state {y[-1],y[-2]}. Uses the
+/// scalar 4-wide unrolled block (precomputed coefficient powers) so the floating-point rounding is
+/// bit-exact with the scalar reference (the codec was built without NEON).
 fn smpl_filt_ar2(input: &[f32], n: usize, c1: f32, c2: f32, state: &mut [f32; 2], out: &mut [f32]) {
     let mut ytmp0 = state[1];
     let mut ytmp1 = state[0];
@@ -991,8 +996,8 @@ fn smpl_filt_ar2(input: &[f32], n: usize, c1: f32, c2: f32, state: &mut [f32; 2]
     state[0] = ytmp1;
 }
 
-/// AR1 leaky integrator `y[n] = x[n] - c1*y[n-1]` (`smpl_filt_ar1`, here the de-emphasis {1,-0.995}).
-/// Replicates the C scalar 5-wide unrolled block (precomputed `ar1` powers) for bit-exact rounding.
+/// AR1 leaky integrator `y[n] = x[n] - c1*y[n-1]` (here the de-emphasis {1,-0.995}). Uses the scalar
+/// 5-wide unrolled block (precomputed `ar1` powers) for bit-exact rounding.
 fn smpl_filt_ar1(input: &[f32], n: usize, c1: f32, state: &mut f32, out: &mut [f32]) {
     let ar1 = -c1;
     let ar1_2 = ar1 * ar1;
@@ -1024,7 +1029,7 @@ fn smpl_filt_ar1(input: &[f32], n: usize, c1: f32, state: &mut f32, out: &mut [f
     *state = ytmp;
 }
 
-/// MA1 `y[n] = x[n] + c1*x[n-1]` (`smpl_filt_ma1`, here the companion pre-emphasis {1,-0.995}).
+/// MA1 `y[n] = x[n] + c1*x[n-1]` (here the companion pre-emphasis {1,-0.995}).
 fn smpl_filt_ma1(input: &[f32], n: usize, c1: f32, state: &mut f32, out: &mut [f32]) {
     let prev = *state;
     for i in (1..n).rev() {
@@ -1036,14 +1041,14 @@ fn smpl_filt_ma1(input: &[f32], n: usize, c1: f32, state: &mut f32, out: &mut [f
     }
 }
 
-/// `smpl_get_hp_coefs`: the default fixed-corner ARMA2 biquad (also the encoder's input high-pass).
-/// `fcorner_hz` clamped to [5, 1500]; `f = fcorner/16000`.
+/// The default fixed-corner ARMA2 biquad (also the encoder's input high-pass). `fcorner_hz` clamped to
+/// [5, 1500]; `f = fcorner/16000`.
 pub(crate) fn smpl_get_hp_coefs(fcorner_hz: f32) -> ([f32; 3], [f32; 3]) {
     let fc = fcorner_hz.clamp(5.0, 1500.0);
     smpl_calc_hp_coefs(HP_DEF_MAF, HP_DEF_ARF, HP_DEF_ARR, fc / 16000.0)
 }
 
-/// `smpl_filt_arma2`: MA2 numerator then AR2 denominator, shared 4-wide state {ma x[-1],x[-2], ar y[-1],y[-2]}.
+/// MA2 numerator then AR2 denominator, shared 4-wide state {ma x[-1],x[-2], ar y[-1],y[-2]}.
 pub(crate) fn smpl_filt_arma2(
     input: &[f32],
     n: usize,
@@ -1063,9 +1068,9 @@ pub(crate) fn smpl_filt_arma2(
     state[3] = ar_st[1];
 }
 
-/// `smpl_calc_hp_coefs`: build the unity-numerator-DC comb biquad. The AR denominator is a resonance
-/// at the pitch angle `2*pi*arf*f` with radius `1 + arr*f` (arr negative -> stable), then the MA
-/// numerator is scaled so the comb has unity DC gain.
+/// Build the unity-numerator-DC comb biquad. The AR denominator is a resonance at the pitch angle
+/// `2*pi*arf*f` with radius `1 + arr*f` (arr negative -> stable), then the MA numerator is scaled so
+/// the comb has unity DC gain.
 fn smpl_calc_hp_coefs(maf: f32, arf: [f32; 2], arr: [f32; 2], f: f32) -> ([f32; 3], [f32; 3]) {
     let mut coef_ma = [1.0f32, -2.0 * cos_approx(2.0 * SMPL_PI * maf * f), 1.0];
     let far_ = arf[0] * f + arf[1] * f * f;
@@ -1082,8 +1087,8 @@ fn smpl_calc_hp_coefs(maf: f32, arf: [f32; 2], arr: [f32; 2], f: f32) -> ([f32; 
     (coef_ma, coef_ar)
 }
 
-/// `new_coefs`: voiced pitch curve when lag>0 (f=1/lag), else the default 50 Hz-corner curve.
-fn new_coefs(st: &mut HpPostfilterState, lag: f32) {
+/// Voiced pitch curve when lag>0 (f=1/lag), else the default 50 Hz-corner curve.
+fn new_coefs_into(coef_ma: &mut [f32; 3], coef_ar: &mut [f32; 3], lag: f32) {
     let (ma, ar) = if lag > 0.0 {
         let f = 1.0 / lag;
         smpl_calc_hp_coefs(HP_PITCH_MAF, HP_PITCH_ARF, HP_PITCH_ARR, f)
@@ -1091,15 +1096,15 @@ fn new_coefs(st: &mut HpPostfilterState, lag: f32) {
         let fc = HP_DEF_FCORNER_HZ.clamp(5.0, 1500.0);
         smpl_calc_hp_coefs(HP_DEF_MAF, HP_DEF_ARF, HP_DEF_ARR, fc / 16000.0)
     };
-    st.coef_ma = ma;
-    st.coef_ar = ar;
+    *coef_ma = ma;
+    *coef_ar = ar;
 }
 
-/// `cos(omega)^2` down-ramp for the lag-change overlap-add (built like `smpl_create_postfilt_tables`).
-/// `omega` is accumulated by repeated addition (not `d_omega * i`) to stay bit-exact with the C table.
+/// `cos(omega)^2` down-ramp for the lag-change overlap-add. `omega` is accumulated by repeated addition
+/// (not `d_omega * i`) to stay bit-exact with the reference table.
 fn ramp_dn(len: usize) -> &'static Vec<f32> {
     static RAMP: OnceLock<Vec<f32>> = OnceLock::new();
-    RAMP.get_or_init(|| {
+    let ramp = RAMP.get_or_init(|| {
         let d_omega = SMPL_PI / (2.0 * (FRAME_LEN as f32 + 1.0));
         let mut omega = d_omega;
         let mut v = Vec::with_capacity(FRAME_LEN);
@@ -1110,7 +1115,7 @@ fn ramp_dn(len: usize) -> &'static Vec<f32> {
         v
     });
     debug_assert_eq!(len, FRAME_LEN);
-    RAMP.get().unwrap()
+    ramp
 }
 
 /// Apply the HP (pitch-harmonic) postfilter to one frame's post-LPC output. `lag` is the frame's
@@ -1122,62 +1127,85 @@ pub(crate) fn smpl_hp_postfilter(
     lag: f32,
     out: &mut [f32],
 ) {
-    // de-emphasis (AR1) into a working buffer.
-    let mut x = vec![0f32; n];
-    smpl_filt_ar1(x_in, n, LO_EMPH[1], &mut st.state_lo_emph1, &mut x);
+    // de-emphasis (AR1) into the x scratch (disjoint field borrows let the input/output/state
+    // alias-free across the arma2 calls below; each scratch is fully written before any read).
+    let HpPostfilterState {
+        state_lo_emph1,
+        state_lo_emph2,
+        state_hp,
+        x_old,
+        coef_ma,
+        coef_ar,
+        scratch_x,
+        scratch_y_old,
+        scratch_y_tmp,
+        scratch_dummy,
+        lag_old,
+    } = st;
+    smpl_filt_ar1(x_in, n, LO_EMPH[1], state_lo_emph1, &mut scratch_x[..n]);
 
     let mut overlap = false;
-    let mut y_old = vec![0f32; n];
-    if st.lag_old < 0.0 {
-        new_coefs(st, lag);
-        st.lag_old = lag;
-    } else if lag > LAG_CHANGE_THRESHOLD * st.lag_old || LAG_CHANGE_THRESHOLD * lag < st.lag_old {
+    if *lag_old < 0.0 {
+        new_coefs_into(coef_ma, coef_ar, lag);
+        *lag_old = lag;
+    } else if lag > LAG_CHANGE_THRESHOLD * *lag_old || LAG_CHANGE_THRESHOLD * lag < *lag_old {
         overlap = true;
-        smpl_filt_arma2(&x, n, st.coef_ma, st.coef_ar, &mut st.state_hp, &mut y_old);
-        new_coefs(st, lag);
-        st.lag_old = lag;
-        let x_old = st.x_old.clone();
-        let mut dummy = vec![0f32; n];
         smpl_filt_arma2(
-            &x_old,
+            &scratch_x[..n],
             n,
-            st.coef_ma,
-            st.coef_ar,
-            &mut st.state_hp,
-            &mut dummy,
+            *coef_ma,
+            *coef_ar,
+            state_hp,
+            &mut scratch_y_old[..n],
         );
-    } else if lag != st.lag_old {
-        new_coefs(st, lag);
-        st.lag_old = lag;
+        new_coefs_into(coef_ma, coef_ar, lag);
+        *lag_old = lag;
+        smpl_filt_arma2(
+            &x_old[..n],
+            n,
+            *coef_ma,
+            *coef_ar,
+            state_hp,
+            &mut scratch_dummy[..n],
+        );
+    } else if lag != *lag_old {
+        new_coefs_into(coef_ma, coef_ar, lag);
+        *lag_old = lag;
     }
-    st.x_old[..n].copy_from_slice(&x[..n]);
+    x_old[..n].copy_from_slice(&scratch_x[..n]);
 
-    let mut y_tmp = vec![0f32; n];
-    smpl_filt_arma2(&x, n, st.coef_ma, st.coef_ar, &mut st.state_hp, &mut y_tmp);
+    smpl_filt_arma2(
+        &scratch_x[..n],
+        n,
+        *coef_ma,
+        *coef_ar,
+        state_hp,
+        &mut scratch_y_tmp[..n],
+    );
 
     if overlap {
         let ramp = ramp_dn(n);
         for i in 0..n {
-            y_tmp[i] += (y_old[i] - y_tmp[i]) * ramp[i];
+            scratch_y_tmp[i] += (scratch_y_old[i] - scratch_y_tmp[i]) * ramp[i];
         }
     }
 
     // companion pre-emphasis (MA1).
-    smpl_filt_ma1(&y_tmp, n, LO_EMPH[1], &mut st.state_lo_emph2, out);
+    smpl_filt_ma1(&scratch_y_tmp[..n], n, LO_EMPH[1], state_lo_emph2, out);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Seed a state from a C `HpPst` snapshot (test-only; mirrors the dumped field order).
+    /// Seed a state from a snapshot (test-only; mirrors the dumped field order).
     #[allow(clippy::too_many_arguments)]
     fn seed_state(
         lo1: f32,
         lo2: f32,
         hp: [f32; 4],
         lag_old: f32,
-        x_old: Vec<f32>,
+        x_old: [f32; FRAME_LEN],
         coef_ma: [f32; 3],
         coef_ar: [f32; 3],
     ) -> HpPostfilterState {
@@ -1189,6 +1217,7 @@ mod tests {
             x_old,
             coef_ma,
             coef_ar,
+            ..Default::default()
         }
     }
 
@@ -1203,17 +1232,17 @@ mod tests {
         v
     }
 
-    /// Validate `smpl_hp_postfilter` against the instrumented C decoder. Each active frame is
-    /// self-contained: the dump carries the C `HpPst` state in, the 8 per-40-block lags, the pre-hp
+    /// Validate `smpl_hp_postfilter` against the instrumented reference decoder. Each active frame is
+    /// self-contained: the dump carries the postfilter state in, the 8 per-40-block lags, the pre-hp
     /// signal, and the post-hp signal; we seed, run, and compare sample-for-sample. The frame lag is
     /// the energy-weighted mean `sum(l^2)/sum(l)` over the 8 lags (0 -> default 50 Hz curve).
     ///
-    /// The reference libopus is built with `-ffast-math -mavx`, which reassociates the recursive
-    /// AR/MA accumulations (and may contract to FMA). Straightforward IEEE-strict Rust therefore
-    /// cannot reproduce its output to the last bit through the near-unit-circle pitch-comb feedback —
-    /// a 1-ULP de-emphasis difference drifts to ~1.5e-5 across the resonant pole. We assert the error
-    /// stays well under the i16 output quantization step (1/32768 ≈ 3.05e-5), i.e. inaudible and
-    /// identical once written to the 16-bit PCM the codec emits.
+    /// The reference is built with `-ffast-math -mavx`, which reassociates the recursive AR/MA
+    /// accumulations (and may contract to FMA). Straightforward IEEE-strict Rust therefore cannot
+    /// reproduce its output to the last bit through the near-unit-circle pitch-comb feedback: a 1-ULP
+    /// de-emphasis difference drifts to ~1.5e-5 across the resonant pole. We assert the error stays
+    /// well under the i16 output quantization step (1/32768 ~= 3.05e-5), i.e. inaudible and identical
+    /// once written to the 16-bit PCM the codec emits.
     #[test]
     fn hp_postfilter_matches_c() {
         const I16_LSB: f32 = 1.0 / 32768.0;
@@ -1235,7 +1264,7 @@ mod tests {
                 *h = rf32(data, &mut o);
             }
             let lag_old = rf32(data, &mut o);
-            let mut x_old = vec![0f32; FRAME_LEN];
+            let mut x_old = [0f32; FRAME_LEN];
             for x in x_old.iter_mut() {
                 *x = rf32(data, &mut o);
             }
@@ -1275,11 +1304,11 @@ mod tests {
             }
         }
         eprintln!(
-            "hp_postfilter vs C: frames={count} worst_abs_diff={worst:.2e} (i16 LSB={I16_LSB:.2e})"
+            "hp_postfilter vs reference: frames={count} worst_abs_diff={worst:.2e} (i16 LSB={I16_LSB:.2e})"
         );
         assert!(
             worst < I16_LSB,
-            "hp_postfilter diverges from C by {worst:.2e} (>= i16 LSB {I16_LSB:.2e})"
+            "hp_postfilter diverges from reference by {worst:.2e} (>= i16 LSB {I16_LSB:.2e})"
         );
     }
 }

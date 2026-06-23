@@ -9,6 +9,8 @@ back-bits / bit_logp / uint / cdf operations that must decode to the listed valu
 and re-encode to the listed bytes, bit-for-bit. Copy it verbatim into
 `mlow/testdata/`.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (`wacore/src/voip/mlow/rangecoder.rs`)
+
 ## Reference source (verbatim — authoritative)
 
 ```rust

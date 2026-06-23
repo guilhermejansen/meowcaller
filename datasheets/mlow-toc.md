@@ -7,6 +7,8 @@ starts here.
 **Validation vector:** `toc_vectors.json` (256 entries, one per byte value). Copy
 it verbatim into `mlow/testdata/`.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (`wacore/src/voip/mlow/toc.rs`)
+
 ## Reference source (verbatim — authoritative)
 
 ```rust

@@ -17,21 +17,21 @@ filename), not `testdata/`. The KAT copy `smpl_tables.json` stays in
 capture. (Convention: KAT inputs live in `testdata/`; production assets keep the
 reference's name at the package root, as `smpl_cc_blob.bin` does.)
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (`wacore/src/voip/mlow/smpl_decode.rs`)
+
 ## Reference source (verbatim — authoritative)
 
 ```rust
-//! MLow per-frame LSF parameter decode (WASM func 3545 "smpl_core_decode_indices", LSF block) plus
-//! the runtime CDF tables it reads. Ported from the Go reference (`smpl_decode.go`).
+//! MLow per-frame LSF parameter decode ("smpl_core_decode_indices", LSF block) plus the runtime CDF
+//! tables it reads.
 //!
 //! The smpl LSF coding is Meta-specific (NOT stock SILK CB1): a 2-way stage-1 codebook *selector*,
 //! a stage-1 *grid* index, then 16 stage-2 residuals from `g_lsf[stage1][config][grid][coeff]`. The
-//! stage-2/gain CDFs are RUNTIME-built by WASM func 3559 (not static rodata) and were captured into
-//! `smpl_tables.json`. The entropy primitive is `decodeCDF` (u16 cumulative CDFs), not the ICDF path.
+//! stage-2/gain CDFs are RUNTIME-built (not static rodata) and were captured into `smpl_tables.json`.
+//! The entropy primitive is `decodeCDF` (u16 cumulative CDFs), not the ICDF path.
 
 use super::rangecoder::RangeDecoder;
-use std::sync::OnceLock;
 
-#[derive(serde::Deserialize, serde::Serialize)]
 pub(crate) struct LsfGrid {
     pub(crate) match1: Vec<u16>,
     pub(crate) match1_alt: Vec<u16>,
@@ -39,9 +39,7 @@ pub(crate) struct LsfGrid {
     pub(crate) match0_alt: Vec<u16>,
 }
 
-/// Runtime CDF tables (captured from WASM func 3559). Extra fields in the JSON (gain_tab_*) are
-/// ignored until the gains/synth layers need them.
-#[derive(serde::Deserialize, serde::Serialize)]
+/// Runtime CDF tables (the LSF block of func 3559's output), expanded from the LSF seed ROM.
 pub(crate) struct SmplTables {
     pub(crate) lsf_sel: Vec<Vec<u16>>,
     pub(crate) lsf_grid: LsfGrid,
@@ -52,26 +50,12 @@ pub(crate) struct SmplTables {
     // fields, so the JSON's gain_main/gain_delta are intentionally not deserialized here.
 }
 
-static SMPL_TABLES: OnceLock<SmplTables> = OnceLock::new();
-
 pub(crate) fn load_smpl_tables() -> &'static SmplTables {
-    SMPL_TABLES.get_or_init(|| {
-        // `smpl_tables.bin` is a zlib-compressed `SmplLsfTables` protobuf (tables.proto). Protobuf
-        // (not postcard) so the byte-identical blob also loads in the Go port via prost/google.proto.
-        let pb: PbSmplLsfTables =
-            super::smpl_tables_blob::load_blob_prost(include_bytes!("testdata/smpl_tables.bin"));
-        pb_into_smpl_tables(pb)
-    })
+    &super::smpl_lsf_seed::lsf_built().tables
 }
 
-// The runtime `SmplTables` above keeps its native u16/nested-Vec shape; a set of hand-derived prost
-// messages (`PbSmplLsfTables`/`PbLsfGrid`/`PbLsfStage2S1..S3`/`PbCdf`) mirror `tables.proto` and are
-// the on-disk format only. u16 CDF entries widen to u32 on the wire; `pb_into_smpl_tables` narrows
-// them back. The table generator encodes via `smpl_tables_to_pb_bytes` → zlib. (Bodies elided here.)
-
-/// Cross-internal-frame decoder state (func 3597 keeps it in the struct func 3545 receives as
-/// p0/p5). The LSF block RESETS the pitch/LTP predictor fields to -1 whenever the stage-1 selector
-/// does not match the previous internal frame.
+/// Cross-internal-frame decoder state. The LSF block RESETS the pitch/LTP predictor fields to -1
+/// whenever the stage-1 selector does not match the previous internal frame.
 #[derive(Default, Clone)]
 pub(crate) struct SmplLsfState {
     pub(crate) prev_stage1: i32,
@@ -84,10 +68,10 @@ pub(crate) struct SmplLsfState {
     /// Encoder-only: previous internal frame's chosen pitch lag (samples) for the pitch-search
     /// continuity bias. Unused by the decoder.
     pub(crate) prev_lag_samples: f32,
-    /// Encoder-only: the C `ParamsEncoder` lag predictor (`prev_lagblk`/`prev_lagidx`) that
+    /// Encoder-only: the `ParamsEncoder` lag predictor (`prev_lagblk`/`prev_lagidx`) that
     /// `smpl_encode_lags` threads to pick the abs-vs-block-transition first lag and the per-block
-    /// delta-lag CMFs. Reset to -1 on a no-match (mirrors C `cond_coding == FALSE`). Unused by the
-    /// decoder (it rebuilds lags from the wire via its own contour predictor).
+    /// delta-lag CMFs. Reset to -1 on a no-match (`cond_coding == FALSE`). Unused by the decoder
+    /// (it rebuilds lags from the wire via its own contour predictor).
     pub(crate) prev_lagblk: i32,
     pub(crate) prev_lagidx: i32,
 }
@@ -120,8 +104,8 @@ pub(crate) struct SmplLsfIndices {
     pub(crate) extra: i32,
 }
 
-/// Decode the LSF block of one internal frame (the first block of func 3545). `config` is the smpl
-/// config (0/1), `intf` the internal-frame index (0,1,2) within the 60 ms packet. Mutates `st`.
+/// Decode the LSF block of one internal frame (the first block of the core decode). `config` is the
+/// smpl config (0/1), `intf` the internal-frame index (0,1,2) within the 60 ms packet. Mutates `st`.
 pub(crate) fn decode_smpl_lsf(
     dec: &mut RangeDecoder,
     t: &SmplTables,
@@ -137,7 +121,7 @@ pub(crate) fn decode_smpl_lsf(
         extra: 0,
     };
 
-    // Read 1 — stage-1 selector. The first internal frame uses the dedicated row 0; later frames
+    // Read 1: stage-1 selector. The first internal frame uses the dedicated row 0; later frames
     // pick row 1/2 by the previous frame's stage-1 result.
     let sel = if intf == 0 {
         0
@@ -149,9 +133,9 @@ pub(crate) fn decode_smpl_lsf(
     let stage1 = dec.decode_cdf(&t.lsf_sel[sel]);
     idx.stage1 = stage1;
 
-    // match := enter_match && stage1 == prev_stage1. enter_match is the value func 3597 leaves in
-    // p5.o0 entering this internal frame: false for the first, true afterwards (func 3597 unconditionally
-    // resets it to 1 after each synthesis). On no-match the pitch/LTP predictor resets to -1.
+    // match := enter_match && stage1 == prev_stage1. enter_match is false for the first internal
+    // frame and true afterwards (reset to 1 after each synthesis). On no-match the pitch/LTP
+    // predictor resets to -1.
     let enter_match = intf != 0;
     let m = enter_match && (stage1 == st.prev_stage1);
     if !m {
@@ -162,7 +146,7 @@ pub(crate) fn decode_smpl_lsf(
     }
     st.prev_stage1 = stage1;
 
-    // Read 2 — stage-1 grid. Inner select keys on the CURRENT stage1, outer select on match.
+    // Read 2: stage-1 grid. Inner select keys on the CURRENT stage1, outer select on match.
     let grid_cdf: &[u16] = if m {
         if stage1 != 0 {
             &t.lsf_grid.match1
@@ -179,14 +163,14 @@ pub(crate) fn decode_smpl_lsf(
     st.prev_match = m;
     st.have_prev = true;
 
-    // Read 3 — 16 stage-2 residuals, each coeff k from its own CDF g_lsf[stage1][config][grid][k].
+    // Read 3: 16 stage-2 residuals, each coeff k from its own CDF g_lsf[stage1][config][grid][k].
     let st2 = &t.lsf_stage2[stage1 as usize][config][grid as usize];
     for (k, c) in st2.iter().enumerate().take(16) {
         idx.stage2[k] = dec.decode_cdf(c);
         idx.stage_nraw[k] = c.len() as i32 - 2;
     }
 
-    // "Extra" LSF read — a 3-symbol static CDF, always fires for our path (p4=1, num_subfr>=2).
+    // "Extra" LSF read: a 3-symbol static CDF, always fires for our path (p4=1, num_subfr>=2).
     idx.extra = dec.decode_cdf(&t.lsf_extra);
 
     log::trace!(
@@ -202,8 +186,8 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
-    // Validates the first-internal-frame LSF parse (range coder at body start — the reliable
-    // validation point) against the Go reference over every active captured frame.
+    // Validates the first-internal-frame LSF parse (range coder at body start, the reliable
+    // validation point) against the captured vectors over every active frame.
     #[test]
     fn lsf_frame0_matches_go() {
         let recs: Value =

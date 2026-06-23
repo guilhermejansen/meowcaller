@@ -14,26 +14,26 @@ verbatim into `mlow/testdata/`. (The CELP-decoder path additionally pins its
 pre-noise excitation against `exc_pre_lags.json` driven by
 `inbound_capture_frames.json`.)
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (`wacore/src/voip/mlow/smpl_synth.rs, smpl_celpdec.rs, smpl_nrgres.rs`)
+
 ## Reference source (verbatim — authoritative)
 
 `smpl_synth.rs`:
 
 ```rust
 //! MLow (smpl_audio_codec) SYNTHESIS LB-core: turns the byte-exact decoded parameters (LSF, pulses,
-//! LTP, gains) into 16 kHz PCM. Faithful port of WASM func 3597's low-band core (NLSF reconstruct →
-//! NLSF2A → pulse excitation × gain → fractional LTP → order-16 LPC synthesis). Ported from the Go
-//! reference (`smpl_synth.go` + `smpl_excitation.go`). The synthesis TAIL is real (the original codec
-//! C source — tlcs/smpl_opus — confirms the decoder applies an HP pitch-harmonic postfilter + a tilt
-//! postfilter; the Go `stageMask==0` claim was wrong). The HP postfilter is ported (`smpl_harmcomb`,
-//! gated behind `SMPL_HP_POSTFILTER`); the residual-domain tilt/uv-shaping stages are still WIP.
+//! LTP, gains) into 16 kHz PCM. Implements WASM func 3597's low-band core (NLSF reconstruct, NLSF2A,
+//! pulse excitation times gain, fractional LTP, order-16 LPC synthesis). The synthesis TAIL is real:
+//! the decoder applies an HP pitch-harmonic postfilter plus a tilt postfilter. The HP postfilter is
+//! implemented (`smpl_harmcomb`, gated behind `SMPL_HP_POSTFILTER`); the residual-domain
+//! tilt/uv-shaping stages are still WIP.
 //!
-//! The float constants below are byte-exact copies of the reference's f32 literals (the extra digits
+//! The float constants below are byte-exact copies of the reference f32 literals (the extra digits
 //! round to the same f32 the WASM uses), so excessive-precision is allowed module-wide.
 #![allow(clippy::excessive_precision)]
 
 use super::smpl_harmcomb::{HpPostfilterState, smpl_hp_postfilter};
 use super::smpl_postfilter::{SmplPostfilterState, smpl_comb_postfilter};
-use std::sync::OnceLock;
 
 /// Gate for the Region-1 per-subframe excitation postfilter (func 3524, the harmonic comb).
 const SMPL_TAIL_REGION1: bool = false;
@@ -75,7 +75,6 @@ const SMPL_FIR16: [f32; 16] = [
     -0.0000063925981521606445,
 ];
 
-#[derive(serde::Deserialize)]
 pub(crate) struct SmplSynthTables {
     /// `[stage1][config][grid][coeff]` -> per-symbol NLSF residual values.
     pub(crate) valtables: Vec<Vec<Vec<Vec<Vec<f32>>>>>,
@@ -92,21 +91,9 @@ pub(crate) struct SmplSynthTables {
     pub(crate) grid16_matrices: Vec<Vec<Vec<f32>>>,
 }
 
-static SMPL_SYNTH_TABLES: OnceLock<SmplSynthTables> = OnceLock::new();
-
 pub(crate) fn load_smpl_synth_tables() -> &'static SmplSynthTables {
-    SMPL_SYNTH_TABLES.get_or_init(|| {
-        // zlib+protobuf (tables.proto `SmplSynthTables`) so the byte-identical blob loads in Go.
-        let pb: PbSmplSynthTables =
-            super::smpl_tables_blob::load_blob_prost(include_bytes!("testdata/smpl_synth_tables.bin"));
-        pb_into_synth(pb)
-    })
+    &super::smpl_lsf_seed::lsf_built().synth
 }
-
-// A prost mirror (`PbSmplSynthTables`, built on the shared nested-float `F2`..`F5` wrappers) plus
-// `pb_into_synth`/`synth_to_pb_bytes` convert between the wire form and the runtime struct. Bodies
-// elided here; see tables.proto and the smpl_synth.rs mirror. Go asset: embed the reference's
-// `smpl_synth_tables.bin` at the meowcaller package root and decode via `internal/tables`.
 
 /// func 3530 (silk_NLSF_VQ_weights_laroia): inverse-gap weights w[k] = invgap[k] + invgap[k+1].
 fn smpl_nlsf_laroia_weights(nlsf: &[f32], out: &mut [f32]) {
@@ -651,13 +638,9 @@ pub(crate) struct SmplDecoderState {
 `smpl_celpdec.rs`:
 
 ```rust
-//! Decoder-side CELP synthesis in the codec's native float domain — a faithful port of the
-//! per-subframe loop in `smpl_core_decoder.c` (excitation → CELP/ACB decode → gen_noise → LPC
-//! synthesis) plus the LSF interpolation (`smpl_lpc_interpol`) and the FCB gain tables.
-//!
-//! This replaces the Go-derived int16-domain LB synthesis. The Go reference diverged from the real
-//! codec (wrong amplitude domain, no gen_noise), so the byte-exact target here is the smpl_opus C
-//! fork (validated bit-exact against the WASM useSmpl reference). Output is float in [-1, 1].
+//! Decoder-side CELP synthesis in the codec's native float domain: the per-subframe loop
+//! (excitation, CELP/ACB decode, gen_noise, LPC synthesis) plus the LSF interpolation and the FCB
+//! gain tables. Output is float in [-1, 1].
 //!
 //! Self-contained on purpose (mirrors `smpl_celp.rs`): the leaf helpers are local so the decoder
 //! path is decoupled from the encoder.
@@ -671,7 +654,7 @@ use super::smpl_gennoise::{
 use std::sync::OnceLock;
 
 const SMPL_LPC_ORDER: usize = 16;
-const SMPL_SUBFR_LEN: usize = 80; // 5 ms @ 16 kHz, num_subframes==4
+const SMPL_SUBFR_LEN: usize = 80; // 5 ms at 16 kHz, num_subframes==4
 const SMPL_NUM_SUBFR: usize = 4;
 const SMPL_FRAME_LEN: usize = 320; // 20 ms
 const SMPL_LAG_SUBFRLEN: usize = 40;
@@ -687,21 +670,21 @@ const SMPL_V_GAIN_STEP_DB: f32 = 3.0;
 const SMPL_UV_GAIN_MIN_DB: f32 = -90.0;
 const SMPL_UV_GAIN_STEP_DB: f32 = 1.0;
 
-/// ACB high-boost endpoints (`smpl_dec_acb_high_boost`).
+/// ACB high-boost endpoints.
 const SMPL_DEC_ACB_HIGH_BOOST: [f32; 2] = [0.35, 0.18];
 
-/// LSF→LPC interpolation factors per subframe, `[lsf_interpol_idx][sf]` (`smpl_lsf_interpol_4`).
+/// LSF->LPC interpolation factors per subframe, `[lsf_interpol_idx][sf]`.
 const SMPL_LSF_INTERPOL_4: [[f32; 4]; 2] = [[0.55, 0.88, 1.0, 1.0], [0.3, 0.65, 0.95, 1.0]];
 
-/// 16-tap symmetric LTP interpolation kernel (`smpl_interpol_kernel`).
+/// 16-tap symmetric LTP interpolation kernel.
 #[rustfmt::skip]
 const SMPL_INTERPOL_KERNEL: [f32; 2 * SMPL_LTP_INTERPOL_DELAY] = [
     -6.3925986e-6, 0.00011064114, -0.0009153038, 0.00484772, -0.018698348, 0.05759091, -0.15997477, 0.6170455,
     0.61704546, -0.15997475, 0.057590906, -0.018698348, 0.00484772, -0.0009153038, 0.000110641144, -6.392598e-6,
 ];
 
-/// Per-subframe ACB-gain codebook (Q14), low-rate and high-rate (`smpl_cb_acbgains_{lr,hr}_Q14`).
-/// Only the high-rate table is exercised by this capture (low_rate==0).
+/// Per-subframe ACB-gain codebook (Q14), low-rate and high-rate. Only the high-rate table is
+/// exercised by this capture (low_rate==0).
 fn acbgains_cb_hr() -> &'static [i16] {
     super::smpl_celp::cb_acbgains_hr_q14()
 }
@@ -738,7 +721,7 @@ fn smpl_dot_prod(a: &[f32], b: &[f32], l: usize) -> f32 {
     r
 }
 
-/// `smpl_NLSF2A`-equivalent: order-16 NLSF (radians) → LPC `a[0..16]`, a[0]=1 (matches smpl_synth).
+/// Order-16 NLSF (radians) -> LPC `a[0..16]`, a[0]=1.
 fn nlsf2a(nlsf: &[f32]) -> [f32; SMPL_LPC_ORDER + 1] {
     let order = SMPL_LPC_ORDER;
     let half = order / 2;
@@ -773,9 +756,9 @@ fn nlsf_poly(out: &mut [f64], cosv: &[f64], half: usize, parity: usize) {
     }
 }
 
-/// `smpl_lpc_interpol`: per-subframe interpolation of the LSF between `prev_lsf` and `lsf`, then
-/// NLSF→A. Returns the per-subframe A coefficients and writes the per-subframe interpolated LSF.
-/// Mutates `prev_lsf` to the last interpolated LSF (codec carries it across frames).
+/// Per-subframe interpolation of the LSF between `prev_lsf` and `lsf`, then NLSF->A. Returns the
+/// per-subframe A coefficients and writes the per-subframe interpolated LSF. Mutates `prev_lsf` to
+/// the last interpolated LSF (codec carries it across frames).
 fn lpc_interpol(
     lsf: &[f32],
     prev_lsf: &mut [f32; SMPL_LPC_ORDER],
@@ -820,7 +803,7 @@ fn acb_dequant(low_rate: bool, acb_idx: i32, acb_g: &mut [f32; SMPL_ACBG_M]) {
     }
 }
 
-/// `adjust_acbgains` then 3-tap symmetric ACB synthesis (`acb_synthesize` with high-boost applied).
+/// Adjust the ACB gains, then 3-tap symmetric ACB synthesis with high-boost applied.
 fn acb_synthesize(
     fcb_subfrlen: usize,
     acb_basis: &[f32],
@@ -852,8 +835,8 @@ fn pitch_sharp(x: &mut [f32], lag: usize, l: usize) {
     }
 }
 
-/// `smpl_syn_ltp_basis`: build the ACB basis from the excitation history; mutates `state` forward.
-/// `state` is the full ACB state; the logical start is `state[state_len - n_lags*40]`.
+/// Build the ACB basis from the excitation history; mutates `state` forward. `state` is the full ACB
+/// state; the logical start is `state[state_len - n_lags*40]`.
 fn syn_ltp_basis(
     lags: &[f32],
     n_lags: usize,
@@ -897,7 +880,7 @@ fn syn_ltp_basis(
                     state[p + nn] = ret;
                 }
             }
-            // C uses `i = SMPL_LAG_SUBFRLEN` here (i runs -1 -> 0 -> +SMPL_LAG_SUBFRLEN), so the tap base
+            // The index runs -1 -> 0 -> +SMPL_LAG_SUBFRLEN here, so the tap base for the last sample
             // is p + (SMPL_LAG_SUBFRLEN - i_lag - delay), not -1 of that.
             let base_last =
                 (p as i32) + (SMPL_LAG_SUBFRLEN as i32 - il - SMPL_LTP_INTERPOL_DELAY as i32);
@@ -921,8 +904,8 @@ fn syn_ltp_basis(
     }
 }
 
-/// `smpl_celp_decode` (voiced branch): add the ACB (LTP) contribution into `lpc_res`, then push the
-/// subframe into the ACB state. `acb_state_len = subfrlen + 2*MAX_PITCH_LAG + LTP_INTERPOL_DELAY`.
+/// Voiced branch: add the ACB (LTP) contribution into `lpc_res`, then push the subframe into the ACB
+/// state. `acb_state_len = subfrlen + 2*MAX_PITCH_LAG + LTP_INTERPOL_DELAY`.
 fn celp_decode(
     acb_state: &mut [f32],
     acb_state_len: usize,
@@ -958,9 +941,9 @@ fn celp_decode(
         .copy_from_slice(&lpc_res[..subfrlen]);
 }
 
-/// `smpl_filt_ar16` over one subframe: `y[n] = x[n] - sum_{i} coef[16-i]*y[n-16+i]`. `ybuf` holds a
-/// 16-sample history prefix at `ybuf[base-16 .. base]`, so synthesis flows contiguously across the
-/// frame (cross-subframe and cross-frame history is the same buffer).
+/// AR(16) over one subframe: `y[n] = x[n] - sum_{i} coef[16-i]*y[n-16+i]`. `ybuf` holds a 16-sample
+/// history prefix at `ybuf[base-16 .. base]`, so synthesis flows contiguously across the frame
+/// (cross-subframe and cross-frame history is the same buffer).
 fn filt_ar16(x: &[f32], a: &[f32; SMPL_LPC_ORDER + 1], ybuf: &mut [f32], base: usize, n: usize) {
     for nn in 0..n {
         let mut res = x[nn];
@@ -981,12 +964,12 @@ pub(crate) struct CelpDecParams {
     pub(crate) acbg_idx: [i32; SMPL_NUM_SUBFR],
     /// Per-40-block pitch lag (codec units: float), 8 per frame, 0 for unvoiced. Synthesis hands the
     /// two blocks of subframe `sf` (`block_lags[2*sf]`, `block_lags[2*sf+1]`) to the ACB/LTP basis, so
-    /// fractional intra-subframe lag changes are preserved (`lags_per_subframe == 2` in C).
+    /// fractional intra-subframe lag changes are preserved (lags_per_subframe == 2).
     pub(crate) block_lags: [f32; 2 * SMPL_NUM_SUBFR],
     pub(crate) total_pulses: i32,
 }
 
-/// Persistent decoder synthesis state (C float domain).
+/// Persistent decoder synthesis state (float domain).
 pub(crate) struct CelpDecState {
     noise: NoiseGenerator,
     acb_state: Vec<f32>,
@@ -996,7 +979,7 @@ pub(crate) struct CelpDecState {
     prev_nrgres: f32,
     /// Post-LPC HP (pitch-harmonic) postfilter state, persistent across the stream.
     hp: super::smpl_harmcomb::HpPostfilterState,
-    /// Test-only capture of the per-subframe pre-noise excitation (== C `exc_pre`), 80/subframe.
+    /// Test-only capture of the per-subframe pre-noise excitation (`exc_pre`), 80/subframe.
     #[cfg(test)]
     pub(crate) dbg_exc_pre: Vec<f32>,
 }
@@ -1019,9 +1002,9 @@ impl Default for CelpDecState {
 }
 
 impl CelpDecState {
-    /// Synthesize one 20 ms internal frame (4 subframes) into 320 float samples in [-1, 1], mirroring
-    /// the `smpl_core_decoder.c` subframe loop. `nlsf` is the reconstructed order-16 NLSF (radians);
-    /// `pulses` are the signed FCB pulse magnitudes (320 positions). `low_rate` is the TOC bit.
+    /// Synthesize one 20 ms internal frame (4 subframes) into 320 float samples in [-1, 1] via the
+    /// subframe loop. `nlsf` is the reconstructed order-16 NLSF (radians); `pulses` are the signed FCB
+    /// pulse magnitudes (320 positions). `low_rate` is the TOC bit.
     pub(crate) fn synth_frame(
         &mut self,
         nlsf: &[f32],
@@ -1057,9 +1040,8 @@ impl CelpDecState {
         ybuf[..SMPL_LPC_ORDER].copy_from_slice(&self.lpc_synth_mem);
         for sf in 0..SMPL_NUM_SUBFR {
             let base = sf * SMPL_SUBFR_LEN;
-            // CELP (ACB/LTP) decode — adds the voiced adaptive-codebook contribution + updates state.
-            // C `smpl_celp_decode` gets `&lags[frame*lags_per_frame + sf*lags_per_subframe]` with
-            // lags_per_subframe == 2: the two 40-blocks of this subframe carry independent lags.
+            // CELP (ACB/LTP) decode: adds the voiced adaptive-codebook contribution + updates state.
+            // With lags_per_subframe == 2 the two 40-blocks of this subframe carry independent lags.
             let sf_lags = [params.block_lags[2 * sf], params.block_lags[2 * sf + 1]];
             celp_decode(
                 &mut self.acb_state,
@@ -1115,9 +1097,9 @@ impl CelpDecState {
         self.lpc_synth_mem
             .copy_from_slice(&ybuf[SMPL_LPC_ORDER + SMPL_FRAME_LEN - SMPL_LPC_ORDER..]);
 
-        // Post-LPC HP (pitch-harmonic) postfilter, per `smpl_core_decoder.c` (LPC postfilter is off on
-        // this stream, tilt postfilter is low_rate-only). The comb lag is the energy-weighted mean of
-        // the 8 per-40-block lags (0 -> the default fixed-corner curve, unvoiced).
+        // Post-LPC HP (pitch-harmonic) postfilter (LPC postfilter is off on this stream, tilt
+        // postfilter is low_rate-only). The comb lag is the energy-weighted mean of the 8 per-40-block
+        // lags (0 -> the default fixed-corner curve, unvoiced).
         let lag = if params.voiced {
             let (mut sl, mut sll) = (0f32, 0f32);
             for &l in &params.block_lags {
@@ -1143,6 +1125,7 @@ impl CelpDecState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::voip::mlow::smpl_cc_tables::load_cc_tables;
     use crate::voip::mlow::smpl_decode::{SmplLsfState, decode_smpl_lsf, load_smpl_tables};
     use crate::voip::mlow::smpl_gains::decode_smpl_gains;
     use crate::voip::mlow::smpl_mem::load_smpl_mem;
@@ -1151,15 +1134,15 @@ mod tests {
     use crate::voip::mlow::smpl_synth::{load_smpl_synth_tables, smpl_reconstruct_nlsf};
     use serde_json::Value;
 
-    /// Validate the pre-noise excitation (FCB pulses × gain + voiced ACB) against the C `exc_pre`
-    /// dump, per subframe. This proves the excitation domain (`fcbgains_uv/v[fcbg_idx]`) and the
-    /// voiced ACB/LTP synthesis are faithful, independent of the PRNG-driven noise.
+    /// Validate the pre-noise excitation (FCB pulses * gain + voiced ACB) against the reference
+    /// `exc_pre` dump, per subframe. This proves the excitation domain (`fcbgains_uv/v[fcbg_idx]`) and
+    /// the voiced ACB/LTP synthesis are faithful, independent of the PRNG-driven noise.
     #[test]
     fn exc_pre_matches_c() {
         let recs: Value = serde_json::from_str(include_str!("testdata/exc_pre_lags.json")).unwrap();
         let carr = recs.as_array().unwrap();
 
-        // Key C exc_pre by (packet, frame, sf).
+        // Key the reference exc_pre by (packet, frame, sf).
         use std::collections::HashMap;
         let mut cmap: HashMap<(i64, i64, i64), &Value> = HashMap::new();
         for c in carr {
@@ -1178,6 +1161,7 @@ mod tests {
         let tbl = load_smpl_tables();
         let synth_t = load_smpl_synth_tables();
         let mem = load_smpl_mem();
+        let cc = load_cc_tables();
         let mut lstate = SmplLsfState::default();
         let mut celp = CelpDecState::default();
         let mut prev_nlsf: Vec<f32> = Vec::new();
@@ -1198,8 +1182,7 @@ mod tests {
             let mut dec = crate::voip::mlow::rangecoder::RangeDecoder::new(&frame[1..]);
             for f in 0..3 {
                 let lsf = decode_smpl_lsf(&mut dec, tbl, &mut lstate, config, f);
-                let pulses =
-                    decode_smpl_pulses(&mut dec, mem, 320, 4, 1, config as i32, lsf.stage1);
+                let pulses = decode_smpl_pulses(&mut dec, cc, 320, 4, 1, config as i32, lsf.stage1);
                 let voiced = lsf.stage1 == 1;
                 let mut params = CelpDecParams {
                     voiced,
@@ -1214,6 +1197,7 @@ mod tests {
                     let pr = decode_smpl_pitch(
                         &mut dec,
                         mem,
+                        cc,
                         &mut lstate,
                         320,
                         4,
@@ -1229,7 +1213,7 @@ mod tests {
                         params.fcbg_idx[sf] = pr.filt_idx[sf].max(0);
                     }
                 } else {
-                    let g = decode_smpl_gains(&mut dec, mem, 4, pulses.subfr);
+                    let g = decode_smpl_gains(&mut dec, cc, 4, pulses.subfr);
                     params.nrgres_dbq_q14 = g.gain_q;
                     params.fcbg_idx = g.nrg_res;
                 }
@@ -1253,13 +1237,13 @@ mod tests {
                     &mut sig,
                 );
                 prev_nlsf = nlsf;
-                // Compare each subframe's exc_pre to C.
+                // Compare each subframe's exc_pre to the reference.
                 for sf in 0..4 {
                     let Some(c) = cmap.get(&(packet as i64, f as i64, sf as i64)) else {
                         continue;
                     };
-                    // Cross-check that our reconstructed per-block lags equal the C dump's two lags for
-                    // this subframe (the decode that drives the ACB/LTP basis).
+                    // Cross-check that our reconstructed per-block lags equal the reference dump's two
+                    // lags for this subframe (the decode that drives the ACB/LTP basis).
                     if voiced {
                         let clags = c["lags"].as_array().unwrap();
                         let c0 = clags[0].as_f64().unwrap() as f32;
@@ -1270,7 +1254,7 @@ mod tests {
                             "per-block lags diverge at pkt={packet} f={f} sf={sf}"
                         );
                     }
-                    // Reconstruct the dense C exc_pre from the sparse nonzero list.
+                    // Reconstruct the dense reference exc_pre from the sparse nonzero list.
                     let mut cexc = [0f32; SMPL_SUBFR_LEN];
                     for pair in c["nz"].as_array().unwrap() {
                         let p = pair.as_array().unwrap();
@@ -1298,17 +1282,17 @@ mod tests {
             }
         }
         eprintln!(
-            "exc_pre vs C: unvoiced ok={uv_ok} bad={uv_bad}; voiced ok={v_ok} bad={v_bad}; worst abs diff={worst:.2e}"
+            "exc_pre vs reference: unvoiced ok={uv_ok} bad={uv_bad}; voiced ok={v_ok} bad={v_bad}; worst abs diff={worst:.2e}"
         );
-        // Unvoiced excitation is deterministic (pulses × fcbgains_uv) — must match.
+        // Unvoiced excitation is deterministic (pulses * fcbgains_uv), so it must match.
         assert_eq!(
             uv_bad, 0,
-            "unvoiced exc_pre diverges from C ({uv_bad} subframes)"
+            "unvoiced exc_pre diverges from reference ({uv_bad} subframes)"
         );
-        // Voiced excitation (FCB pulses × gain + ACB/LTP per-block-lag synthesis) is also deterministic.
+        // Voiced excitation (FCB pulses * gain + ACB/LTP per-block-lag synthesis) is also deterministic.
         assert_eq!(
             v_bad, 0,
-            "voiced exc_pre diverges from C ({v_bad} subframes)"
+            "voiced exc_pre diverges from reference ({v_bad} subframes)"
         );
     }
 }
@@ -1317,14 +1301,14 @@ mod tests {
 `smpl_nrgres.rs`:
 
 ```rust
-//! MLow unvoiced residual-energy quantizer: faithful port of `smpl_quant_nrg_res`
-//! (`smpl_quant_nrg_res.c`). The unvoiced excitation LEVEL is carried entirely by the per-subframe
-//! quantized residual-energy floor (`nrgres_dbq_Q14`): a frame-mean scalar quant plus a shape VQ.
-//! Our decoder reads this floor back as `gain_q` (validated bit-exact in `param_decode_match`), so the
-//! encoder must produce the same `nrgres_dbq_Q14` for the round-trip level to be right.
+//! MLow unvoiced residual-energy quantizer. The unvoiced excitation LEVEL is carried entirely by the
+//! per-subframe quantized residual-energy floor (`nrgres_dbq_Q14`): a frame-mean scalar quant plus a
+//! shape VQ. Our decoder reads this floor back as `gain_q` (validated bit-exact in
+//! `param_decode_match`), so the encoder must produce the same `nrgres_dbq_Q14` for the round-trip
+//! level to be right.
 //!
-//! The reconstruction is validated against the C `enc_dump` (the `nrgres_dbq_Q14` test). It is wired
-//! live in `analysis.rs`'s unvoiced path: the wire gain block IS the nrgres layout
+//! The reconstruction is validated against the reference dump (the `nrgres_dbq_Q14` test). It is
+//! wired live in `analysis.rs`'s unvoiced path: the wire gain block IS the nrgres layout
 //! (`gain_main`==`nrgres_frame_qi`, `gain_delta`==`nrgres_shape_qi`, the gain table == the shape
 //! codebook, `cb1` == the frame step), so `gain_q[sf]` decodes back as `nrgres_dbq_Q14`.
 #![allow(dead_code)] // serde-only fields + test-only reconstruction helpers
@@ -1337,7 +1321,7 @@ const SMPL_RES_NRG_MAX_DB: f32 = 0.0;
 const SMPL_NRG_STEP_DB_Q14_4: i32 = 16686;
 const SMPL_RES_NRG_SHAPE_CB_N_4: usize = 98;
 
-/// `nrgres_shape_CB_4_Q10` (98 vectors x 4 subframes), verbatim from `smpl_nrgres_tables.c`.
+/// `nrgres_shape_CB_4_Q10` (98 vectors x 4 subframes), stored verbatim.
 #[rustfmt::skip]
 const NRGRES_SHAPE_CB_4_Q10: [i16; SMPL_RES_NRG_SHAPE_CB_N_4 * 4] = [
     -2515, -2238, 2632, 2121, 790, 3973, -2872, -1891, -533, 2847, 1453, -3767, -6174, -402, 2668, 3908,
@@ -1371,12 +1355,12 @@ const NRGRES_SHAPE_CB_4_Q10: [i16; SMPL_RES_NRG_SHAPE_CB_N_4 * 4] = [
 pub(crate) struct NrgResQuant {
     pub frame_qi: i32,
     pub shape_qi: i32,
-    /// Per-subframe quantized residual-energy floor (Q14) — the decoder reads this as `gain_q`.
+    /// Per-subframe quantized residual-energy floor (Q14); the decoder reads this as `gain_q`.
     pub dbq_q14: [i32; 4],
 }
 
-/// Port of `smpl_quant_nrg_res` for num_subfr == 4. `nrgres[sf]` is the per-subframe residual energy
-/// `nrg(reslpc_sf)/subfrlen` in the SAME (int16-scaled) domain the C `reslpc` lives in.
+/// Residual-energy quantizer for num_subfr == 4. `nrgres[sf]` is the per-subframe residual energy
+/// `nrg(reslpc_sf)/subfrlen` in the SAME (int16-scaled) domain `reslpc` lives in.
 pub(crate) fn quant_nrg_res_4(nrgres: &[f32; 4]) -> NrgResQuant {
     let mut nrgres_db = [0.0f32; 4];
     let mut frame_db = 0.0f32;
@@ -1419,8 +1403,8 @@ pub(crate) fn quant_nrg_res_4(nrgres: &[f32; 4]) -> NrgResQuant {
     }
 }
 
-/// Reconstruct the per-subframe `nrgres_dbq_Q14` from a frame/shape index pair, mirroring the C
-/// `decode_lb_unvoiced` reconstruction. Used to validate the quantizer against the reference dump.
+/// Reconstruct the per-subframe `nrgres_dbq_Q14` from a frame/shape index pair, matching the unvoiced
+/// decode reconstruction. Used to validate the quantizer against the reference dump.
 fn dbq_from_indices(frame_qi: i32, shape_qi: usize) -> [i32; 4] {
     let frame_dbq = frame_qi * SMPL_NRG_STEP_DB_Q14_4 + (SMPL_RES_NRG_MIN_DB as i32) * (1 << 14);
     std::array::from_fn(|sf| frame_dbq + (NRGRES_SHAPE_CB_4_Q10[shape_qi * 4 + sf] as i32) * 16)
@@ -1430,8 +1414,8 @@ fn dbq_from_indices(frame_qi: i32, shape_qi: usize) -> [i32; 4] {
 mod tests {
     use super::*;
 
-    // The reconstruction must match the C reference dump: for the first internal frame the C committed
-    // nrgres_frame_qi=0, nrgres_shape_qi=8, yielding these exact per-subframe nrgres_dbq_Q14 (which the
+    // The reconstruction must match the reference dump: for the first internal frame the committed
+    // nrgres_frame_qi=0, nrgres_shape_qi=8 yield these exact per-subframe nrgres_dbq_Q14 (which the
     // decoder reads back as gain_q).
     #[test]
     fn dbq_reconstruction_matches_c_dump() {
