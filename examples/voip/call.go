@@ -324,6 +324,7 @@ type callMedia struct {
 	peerLID   string
 	direction string
 	started   bool
+	cancel    context.CancelFunc // tears down this call's media goroutine
 }
 
 // coordinator answers inbound offers and brings up the media loop once the relay
@@ -479,10 +480,20 @@ func (c *coordinator) onRelayLatency(e *events.CallRelayLatency) {
 // allocation arrives here (whatsmeow otherwise drops the ack), which is what lets
 // the caller bring up media.
 func (c *coordinator) onCallAck(ack *waBinary.Node) {
-	// An error ack (e.g. 404 unreachable, 439 bad offer) carries no usable relay;
-	// don't try to start media on it.
+	// An error ack (e.g. 404 unreachable, 439 bad offer, 500 server error) carries no
+	// usable relay. Report it accurately (offer/accept/relaylatency/…) and tear down
+	// any media we already started for that call rather than spin forever.
 	if errCode := ack.AttrGetter().String("error"); errCode != "" {
-		log.Printf("⛔ call offer rejected by server: error %s", errCode)
+		ackType := ack.AttrGetter().String("type")
+		callID := ""
+		if en := findChild(ack, "error"); en != nil {
+			callID = en.AttrGetter().String("call-id")
+		}
+		log.Printf("⛔ call %s rejected by server: %s error %s", callID, ackType, errCode)
+		c.stopMedia(callID)
+		if c.store != nil && callID != "" {
+			_ = c.store.SetPhase(c.ctx, callID, "failed:"+errCode)
+		}
 		return
 	}
 	r := findRelay(ack)
@@ -497,8 +508,9 @@ func (c *coordinator) onCallAck(ack *waBinary.Node) {
 	c.onRelay(callID, ack)
 }
 
-// onTerminate records a call's end in the meowcaller store.
+// onTerminate tears down a call's media and records its end.
 func (c *coordinator) onTerminate(callID string) {
+	c.stopMedia(callID)
 	if c.store == nil {
 		return
 	}
@@ -513,13 +525,25 @@ func (c *coordinator) maybeStart(callID string, m *callMedia) {
 		return
 	}
 	m.started = true
+	mctx, cancel := context.WithCancel(c.ctx)
+	m.cancel = cancel
 	c.persist(callID, "media", m)
 	log.Printf("▶ starting media for %s", callID)
 	go func() {
-		if err := runMedia(c.ctx, callID, m.callKey, m.selfLID, m.peerLID, m.relay); err != nil {
+		if err := runMedia(mctx, callID, m.callKey, m.selfLID, m.peerLID, m.relay); err != nil {
 			log.Printf("media for %s ended: %v", callID, err)
 		}
 	}()
+}
+
+// stopMedia cancels a call's media goroutine if it's running.
+func (c *coordinator) stopMedia(callID string) {
+	c.mu.Lock()
+	if m := c.cmap[callID]; m != nil && m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	c.mu.Unlock()
 }
 
 // runListen connects and, with autoAccept, answers incoming calls and pipes media.
