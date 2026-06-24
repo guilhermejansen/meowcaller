@@ -18,7 +18,7 @@ command -v ffmpeg >/dev/null 2>&1 || { echo "need ffmpeg (decodes the input audi
 
 # mlow <meowtool args...> — the local (Go) MLow encode/decode tool. This is the only
 # implementation-specific line; the Rust repo's copy of this script swaps just this.
-mlow() { go run ./cmd/mlowtest "$@"; }
+mlow() { go run ./examples/mlow "$@"; }
 
 # audio file -> raw s16le mono 16k on stdout
 to_pcm() { ffmpeg -hide_banner -loglevel error -i "$1" -ar "$RATE" -ac 1 -f s16le -; }

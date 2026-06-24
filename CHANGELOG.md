@@ -7,6 +7,14 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### examples — move mlowtest under examples/mlow; rename voip example to cli
+- Moved `cmd/mlowtest` → `examples/mlow` (stays in the root module — it only imports
+  `mlow`) and removed the now-empty `cmd/`. Renamed the `examples/voip` example module
+  → `examples/cli` (go.mod module path, README, and the in-tool command name updated;
+  the hardcoded `wa-voip.db`/`meowcaller.db` session files are unchanged). Updated
+  `scripts/mlow_file_test.sh` (`./cmd/mlowtest` → `./examples/mlow`) and the root
+  `.gitignore` (`/mlowtest` → `/mlow`). Both modules build/vet/test clean.
+
 ### docs — remove datasheets, PLAN/MODULES/GLOSSARY; prune coderabbit config
 - Removed the internal build-protocol docs: the `datasheets/` directory (30 files),
   `PLAN.md`, `MODULES.md`, and `GLOSSARY.md`. Dropped the now-obsolete

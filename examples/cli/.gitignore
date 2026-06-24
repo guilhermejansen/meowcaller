@@ -1,0 +1,4 @@
+/voip
+*.db
+*.db-*
+wa-voip-wam.json
