@@ -3,7 +3,9 @@ package meowcaller
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"math"
 	"net"
 	"sync/atomic"
 	"time"
@@ -58,6 +60,10 @@ func (e *engine) connectAndAllocate(ctx context.Context, rd *relayData) (*relay.
 	}
 	addr := &net.UDPAddr{IP: net.ParseIP(ep.addresses[0].ipv4), Port: int(ep.addresses[0].port)}
 	log.Info().Str("relay_name", ep.relayName).Str("addr", addr.String()).Msg("connecting media transport to relay")
+	e.c.diag.Emit("relay", map[string]any{
+		"event": "endpoint", "relay_name": ep.relayName,
+		"ipv4": ep.addresses[0].ipv4, "port": ep.addresses[0].port, "token_id": ep.tokenID,
+	})
 
 	type result struct {
 		ch  *relay.RelayMediaChannel
@@ -90,6 +96,11 @@ func (e *engine) connectAndAllocate(ctx context.Context, rd *relayData) (*relay.
 		ch.Close()
 		return nil, nil, fmt.Errorf("relay has no <key>")
 	}
+	e.c.diag.Emit("relay", map[string]any{
+		"event": "keying", "token_id": ep.tokenID, "token_count": len(rd.relayTokens),
+		"relay_key_hex": hex.EncodeToString(rd.relayKeyASCII),
+		"token_hex":     hex.EncodeToString(rd.relayTokens[ep.tokenID]),
+	})
 	endpointXor, ok := stun.EncodeXorRelayEndpoint(ep.addresses[0].ipv4, ep.addresses[0].port, log)
 	if !ok {
 		ch.Close()
@@ -103,6 +114,10 @@ func (e *engine) connectAndAllocate(ctx context.Context, rd *relayData) (*relay.
 		return nil, nil, fmt.Errorf("allocate send: %w", err)
 	}
 	log.Info().Int("bytes", len(allocate)).Msg("sent STUN allocate")
+	e.c.diag.Emit("stun", map[string]any{
+		"event": "allocate_sent", "bytes": len(allocate),
+		"tx_id_hex": hex.EncodeToString(tx[:]), "allocate_hex": hex.EncodeToString(allocate),
+	})
 	return ch, allocate, nil
 }
 
@@ -130,6 +145,10 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		_, _ = rand.Read(ptx[:])
 		initPing := stun.BuildWhatsappPing(ptx, log)
 		_, _ = ch.Send(initPing[:])
+		e.c.diag.Emit("stun", map[string]any{
+			"event": "consent_ping_sent", "tx_id_hex": hex.EncodeToString(ptx[:]),
+			"ping_hex": hex.EncodeToString(initPing[:]),
+		})
 	}
 
 	ssrc, err := rtp.DeriveWasmParticipantSsrc(callID, rtp.FormatE2ESrtpParticipantID(selfLID), 0, log)
@@ -141,6 +160,10 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		Str("peer_lid", peerLID).
 		Str("ssrc", fmt.Sprintf("0x%08x", ssrc)).
 		Msg("media session")
+	e.c.diag.Emit("ssrc", map[string]any{
+		"call_id": callID, "ssrc": ssrc, "self_lid": selfLID,
+		"participant_id": rtp.FormatE2ESrtpParticipantID(selfLID),
+	})
 
 	enc := mlow.NewMlowEncoder(mlow.WithLogger(log))
 	dec := mlow.NewMlowDecoder(mlow.WithLogger(log))
@@ -152,6 +175,18 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	if err != nil {
 		return err
 	}
+	// The derived E2E-SRTP keys live inside MediaPipeline; record the derivation INPUTS
+	// (callKey + participant-ID info strings) so a reference can re-derive and compare.
+	e.c.diag.Emit("srtp", map[string]any{
+		"event": "media_keys_input", "call_id": callID, "ssrc": ssrc,
+		"self_participant_id": rtp.FormatE2ESrtpParticipantID(selfLID),
+		"peer_participant_id": rtp.FormatE2ESrtpParticipantID(peerLID),
+		"call_key_hex":        hex.EncodeToString(callKey),
+	})
+	e.c.diag.Emit("meta", map[string]any{
+		"event": "media_start", "call_id": callID, "self_lid": selfLID,
+		"peer_lid": peerLID, "ssrc": ssrc,
+	})
 
 	// relayRx counts packets received from the relay, so the silence watchdog can warn if
 	// the relay never answers our allocate.
@@ -180,6 +215,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	go func() {
 		t := time.NewTicker(time.Second)
 		defer t.Stop()
+		var tickCount uint64
 		for {
 			select {
 			case <-ctx.Done():
@@ -193,6 +229,11 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 				return
 			}
 			_, _ = ch.Send(ping[:])
+			tickCount++
+			e.c.diag.Emit("stun", map[string]any{
+				"event": "keepalive", "tick": tickCount,
+				"tx_id_hex": hex.EncodeToString(tx[:]), "ping_hex": hex.EncodeToString(ping[:]),
+			})
 		}
 	}()
 
@@ -226,11 +267,17 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 			if err != nil {
 				continue
 			}
+			e.c.diag.Emit("media_out", map[string]any{
+				"frame": txCount, "frame_samples": len(frame), "pcm_rms": rmsFloat32(frame),
+				"payload_len": len(payload), "payload_hex": hex.EncodeToString(payload),
+				"packet_len": len(packet), "packet_hex": hex.EncodeToString(packet),
+			})
 			if _, err := ch.Send(packet); err != nil {
 				return
 			}
 			if txCount++; txCount == 1 {
 				log.Info().Int("bytes", len(packet)).Msg("first RTP sent to relay, outbound media flowing")
+				e.c.diag.Emit("meta", map[string]any{"event": "first_rtp_sent", "call_id": callID, "bytes": len(packet)})
 			}
 		}
 	}()
@@ -250,7 +297,12 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		}
 		relayRx.Add(1)
 		pkt := buf[:n]
-		if relay.ClassifyRelayPacket(pkt) != relay.RelayPacketRtp {
+		isRTP := relay.ClassifyRelayPacket(pkt) == relay.RelayPacketRtp
+		e.c.diag.Emit("relay", map[string]any{
+			"event": "packet_in", "bytes": n, "is_rtp": isRTP,
+			"packet_hex": hex.EncodeToString(pkt),
+		})
+		if !isRTP {
 			mt, isStun := stun.StunMessageType(pkt)
 			if isStun && mt == stun.MsgBindingRequest {
 				if txid, ok := stun.StunTransactionID(pkt); ok && len(txid) == 12 {
@@ -260,6 +312,10 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 					if _, err := ch.Send(resp); err != nil {
 						return fmt.Errorf("relay send binding-success: %w", err)
 					}
+					e.c.diag.Emit("stun", map[string]any{
+						"event": "binding_request_answered",
+						"tx_id_hex": hex.EncodeToString(tx[:]), "resp_hex": hex.EncodeToString(resp),
+					})
 				}
 			}
 			continue
@@ -267,19 +323,33 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		if rtpSeen++; rtpSeen == 1 {
 			log.Info().Int("bytes", n).Msg("first RTP-classified packet from relay, relay is bridging the peer's media")
 		}
-		_, payload, ok := rxPipe.UnprotectAudio(pkt)
+		hdr, payload, ok := rxPipe.UnprotectAudio(pkt)
 		if !ok {
 			if unprotectFail++; unprotectFail == 1 {
 				log.Warn().Int("bytes", n).Msg("RTP arrived but failed to unprotect, keying/SSRC mismatch on the recv path")
 			}
+			e.c.diag.Emit("srtp", map[string]any{"event": "unprotect_failed", "bytes": n})
 			continue
 		}
+		e.c.diag.Emit("rtp", map[string]any{
+			"event": "in", "ssrc": hdr.Ssrc, "seq": hdr.SequenceNumber,
+			"ts": hdr.Timestamp, "pt": hdr.PayloadType, "marker": hdr.Marker,
+		})
+		e.c.diag.Emit("srtp", map[string]any{
+			"event": "frame_unprotected", "ssrc": hdr.Ssrc, "seq": hdr.SequenceNumber,
+			"payload_len": len(payload), "payload_hex": hex.EncodeToString(payload),
+		})
 		frame := dec.Decode(payload)
+		e.c.diag.Emit("media_in", map[string]any{
+			"seq": hdr.SequenceNumber, "samples": len(frame),
+			"pcm_rms": rmsFloat32(frame), "payload_len": len(payload),
+		})
 		if _, sink := callPlayerSink(call); sink != nil {
 			_ = sink.WriteFrame(frame)
 		}
 		if rtpIn++; rtpIn == 1 {
 			log.Info().Msg("first RTP decoded from relay, inbound audio flowing")
+			e.c.diag.Emit("meta", map[string]any{"event": "first_rtp_in", "call_id": callID})
 			if call != nil {
 				call.setPhase(CallPhaseActive)
 				if fn := call.onReadyFn(); fn != nil {
@@ -297,4 +367,17 @@ func callPlayerSink(call *Call) (*Player, AudioSink) {
 		return nil, nil
 	}
 	return call.playerAndSink()
+}
+
+// rmsFloat32 returns the root-mean-square level of a PCM frame, a cheap loudness
+// metric for the media diagnostic streams (avoids inlining raw float32 PCM).
+func rmsFloat32(f []float32) float64 {
+	if len(f) == 0 {
+		return 0
+	}
+	var sum float64
+	for _, s := range f {
+		sum += float64(s) * float64(s)
+	}
+	return math.Sqrt(sum / float64(len(f)))
 }

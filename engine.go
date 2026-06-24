@@ -201,10 +201,17 @@ func (e *engine) placeCall(ctx context.Context, target string) (*Call, error) {
 	m.direction = CallDirectionOutgoing
 	e.mu.Unlock()
 
+	e.c.diag.Emit("keying", map[string]any{
+		"call_id": callID, "direction": "out", "self_lid": self.String(),
+		"peer_lid": peerLID.String(), "device_count": len(deviceKeys),
+		"call_key_hex": hex.EncodeToString(callKey[:]),
+	})
+
 	if err := cli.DangerousInternals().SendNode(ctx, offer); err != nil {
 		return nil, fmt.Errorf("send offer: %w", err)
 	}
 	e.c.log.Info().Str("call_id", callID).Msg("offer sent; media starts when the relay endpoint arrives")
+	e.c.diag.Emit("meta", map[string]any{"event": "offer_sent", "call_id": callID, "peer_lid": peerLID.String(), "direction": "out"})
 	return call, nil
 }
 
@@ -228,11 +235,19 @@ func (e *engine) onOffer(ev *events.CallOffer) {
 		return
 	}
 	e.c.log.Info().Int("key_bytes", len(callKey)).Str("call_id", ev.CallID).Msg("decrypted inbound callKey")
+	e.c.diag.Emit("keying", map[string]any{
+		"call_id": ev.CallID, "direction": "in", "from": ev.From.String(),
+		"call_key_hex": hex.EncodeToString(callKey),
+	})
 
 	peer := ev.CallCreator
 	if peer.IsEmpty() {
 		peer = ev.From
 	}
+	e.c.diag.Emit("meta", map[string]any{
+		"event": "offer_received", "call_id": ev.CallID,
+		"from": ev.From.String(), "peer": peer.String(),
+	})
 	call := &Call{eng: e, id: ev.CallID, peer: peer, phase: CallPhaseRinging}
 
 	e.mu.Lock()

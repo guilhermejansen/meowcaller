@@ -7,6 +7,23 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### diag — engine emissions: keying/ssrc/srtp/rtp/media/relay/stun/meta streams
+- Wired exact `e.c.diag.Emit(...)` calls at the engine boundaries (nil-safe, so zero
+  cost when diagnostics are off). `engine.go`: **keying** (outbound generated callKey,
+  inbound decrypted callKey — raw hex) and **meta** (offer_sent/offer_received).
+  `engine_media.go` `connectAndAllocate`/`runMedia`: **relay** (endpoint, relay keying
+  material, every inbound relay packet), **stun** (allocate, consent ping, 1 Hz
+  keepalive, binding-success), **ssrc** (derived participant SSRC + info string),
+  **srtp** (media-key derivation inputs; per-frame `frame_unprotected` + decrypted
+  payload; unprotect failures), **rtp** (inbound header: ssrc/seq/ts/pt/marker),
+  **media_out** (per-frame source RMS + encoded payload + protected packet, hex),
+  **media_in** (per-frame decoded sample count + RMS), and **meta** milestones
+  (media_start, first_rtp_sent, first_rtp_in). Added an `rmsFloat32` helper and a
+  keepalive tick counter; `UnprotectAudio` now binds its header for the `rtp` stream.
+  Deferred to v2 (would touch session/srtp/rtp signatures): derived SRTP subkeys,
+  per-packet ROC/IV/header struct, and raw PCM sidecar files (RMS only for now). Added
+  a `diag` recorder KAT (JSONL output + nil-safety). build/vet/suite green.
+
 ### examples/cli — --diagdump <dir> flag (xmpp + log capture via a logger tee)
 - New developer flag `--diagdump <dir>` (parsed out of `os.Args` before the positional
   dispatch). When set, the CLI builds a `diag.Recorder`, tees the zerolog stream via
