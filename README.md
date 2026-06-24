@@ -4,7 +4,7 @@
 meowcaller is a Go library for the WhatsApp Web VoIP stack. It is 100% pure GO without any CGO dependencies and little to no dependencies of its own. It includes the proprietary audio codec MLOW written and validated completely in GO.
 
 ## Discussion
-Matrix room: [#meowcaller:matrix.com](https://matrix.to/#/#meowcaller:matrix.com).
+Matrix room: [#meowcaller:matrix.org](https://matrix.to/#/#meowcaller:matrix.org).
 
 Discord channel: #meowcaller in the [WhiskeySockets Discord server](https://whiskey.so/discord).
 
