@@ -7,6 +7,21 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### opus — scaffold voip_settings parse + codec selection (mlow vs Opus lever)
+- First module of basic Opus support, picked when the server sets
+  `encode.use_mlow_codec_v1=false`. New compiling surface, bodies are TODO:
+  `signaling.VoipSettings` + `signaling.ParseVoipSettings` (the codec-relevant subset
+  of the `<voip_settings>` JSON blob) and `AudioCodec` (`AudioCodecMlow`/`AudioCodecOpus`)
+  + `selectAudioCodec` in the root package. `engineCall` gains a `codec` field, and
+  `onOffer` (inbound) / `onCallAck` (outbound) now run `applyVoipSettingsCodec` to find
+  the blob (`findChild`), parse it, and record the per-call codec — inert today (parser
+  stub → defaults to MLow), so the live MLow path is unchanged. **Original glue, not a
+  port:** the whatsapp-rust reference does not read `use_mlow_codec_v1` (it steers onto
+  Opus by advertising only `<audio rate=8000>`), so the parser/selector carry no
+  `// Source of truth:` line. KATs (`TestParseVoipSettings`/`...Opus`,
+  `TestSelectAudioCodec`) wired to the captured sample blob and `t.Skip`-blocked on the
+  stubs. State: **scaffolded**. build/vet clean, suite green.
+
 ### meowcaller — preaccept eagerly on inbound offer (preparation step)
 - `<preaccept>` is now sent the moment an inbound offer arrives (in `onOffer`),
   independent of the later Answer/Reject decision — it is a preparation step that keeps

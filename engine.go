@@ -50,6 +50,7 @@ type engineCall struct {
 	from    types.JID // the <call> "from" — where stanzas are addressed
 
 	direction CallDirection
+	codec     AudioCodec // audio codec for this call, selected from voip_settings (MLow default)
 	started   bool
 	cancel    context.CancelFunc // tears down this call's media goroutine
 
@@ -246,6 +247,7 @@ func (e *engine) onOffer(ev *events.CallOffer) {
 	if r := findRelay(ev.Data); r != nil {
 		m.relay = parseRelayData(r)
 	}
+	e.applyVoipSettingsCodec(m, ev.Data, ev.CallID)
 	e.mu.Unlock()
 
 	// Preaccept eagerly: it is a preparation step, done independently of the later
@@ -435,6 +437,29 @@ type rlProbe struct {
 	addr      []byte
 }
 
+// applyVoipSettingsCodec finds the <voip_settings> blob under node (an inbound
+// <offer> or an outbound call <ack>), parses it, and records the selected audio
+// codec on the call. Absent or unparseable settings leave the call on MLow. The
+// caller holds e.mu.
+func (e *engine) applyVoipSettingsCodec(m *engineCall, node *waBinary.Node, callID string) {
+	vsNode := findChild(node, "voip_settings")
+	if vsNode == nil {
+		return
+	}
+	content, _ := vsNode.Content.([]byte)
+	vs, err := signaling.ParseVoipSettings(content, e.c.log)
+	if err != nil {
+		e.c.log.Debug().Err(err).Str("call_id", callID).Msg("voip_settings parse failed; keeping mlow")
+		return
+	}
+	m.codec = selectAudioCodec(vs)
+	e.c.log.Info().
+		Str("call_id", callID).
+		Str("codec", m.codec.String()).
+		Bool("use_mlow_codec_v1", vs.UseMlowCodecV1).
+		Msg("selected audio codec from voip_settings")
+}
+
 // onCallAck handles an <ack class="call"> node. For an outbound offer the relay
 // allocation arrives here (whatsmeow otherwise drops the ack), which is what lets the
 // caller bring up media. An error ack tears the call down.
@@ -463,6 +488,11 @@ func (e *engine) onCallAck(ack *waBinary.Node) {
 		return
 	}
 	e.c.log.Info().Str("call_id", callID).Msg("relay allocation arrived in call ack")
+	e.mu.Lock()
+	if m := e.calls[callID]; m != nil {
+		e.applyVoipSettingsCodec(m, ack, callID)
+	}
+	e.mu.Unlock()
 	e.onRelay(callID, ack)
 }
 
