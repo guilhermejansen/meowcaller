@@ -7,6 +7,15 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### meowcaller — accept only on the first mute_v2 (not on later mute-state changes)
+- The deferred `<accept>` is sent on the **first** `mute_v2` only (it arrives right
+  after the relaylatency/transport). `onCallRaw` now gates on `acceptPending`: a later
+  `mute_v2` — an in-call mute-state change (e.g. 1→0) — is logged at debug and ignored
+  instead of re-running the accept path and re-logging "sending deferred accept" on
+  every mute toggle. `sendAccept` stays the authoritative one-shot (re-checks
+  `acceptPending` under the lock). Live-path glue; covered by call behavior, no unit
+  test.
+
 ### opus — implement voip_settings parse + codec selection
 - Landed the bodies scaffolded below. `ParseVoipSettings` json-decodes the
   stringly-typed blob (`encode.use_mlow_codec_v1`/`frame_ms`, `rc.target_bitrate`),
