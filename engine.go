@@ -303,7 +303,7 @@ func (e *engine) onOffer(ev *events.CallOffer) {
 	// Answer/Reject decision. It keeps the offer alive and joins the relay election while
 	// the integrator decides — even a call the user goes on to decline has usually already
 	// been preaccepted.
-	if err := e.sendPreaccept(ev.CallID, ev.From, ev.CallCreator); err != nil {
+	if err := e.sendPreaccept(ev.CallID, ev.From, ev.CallCreator, isVideo); err != nil {
 		e.c.log.Warn().Err(err).Str("call_id", ev.CallID).Msg("preaccept failed")
 	}
 
@@ -314,22 +314,16 @@ func (e *engine) onOffer(ev *events.CallOffer) {
 
 // sendPreaccept sends the <preaccept> for an inbound call — a preparation step done
 // eagerly when the offer arrives (see onOffer), independent of the later Answer/Reject
-// decision. Single rate 16000 + encopt + capability, NO metadata — built inline to match
-// the captured WA-Web preaccept body exactly.
-func (e *engine) sendPreaccept(callID string, to, creator types.JID) error {
-	pre := waBinary.Node{
-		Tag:   "call",
-		Attrs: waBinary.Attrs{"to": to, "id": e.c.wa.DangerousInternals().GenerateRequestID()},
-		Content: []waBinary.Node{{
-			Tag:   "preaccept",
-			Attrs: waBinary.Attrs{"call-id": callID, "call-creator": creator},
-			Content: []waBinary.Node{
-				{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
-				{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}},
-				{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: signaling.CapabilityOffer},
-			},
-		}},
-	}
+// decision. Video calls also advertise the H.264 decoder before the final accept.
+func (e *engine) sendPreaccept(callID string, to, creator types.JID, video bool) error {
+	pre := signaling.BuildPreaccept(
+		callID,
+		to,
+		creator,
+		e.c.wa.DangerousInternals().GenerateRequestID(),
+		[]string{"16000"},
+		video,
+	)
 	if err := e.c.wa.DangerousInternals().SendNode(context.Background(), pre); err != nil {
 		return fmt.Errorf("send preaccept: %w", err)
 	}

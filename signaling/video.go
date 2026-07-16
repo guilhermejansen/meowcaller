@@ -71,6 +71,16 @@ func videoAcceptNode() waBinary.Node {
 	}}
 }
 
+// videoPreacceptNode advertises the callee's decoder before the final accept.
+func videoPreacceptNode() waBinary.Node {
+	return waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{
+		"dec":                videoNegotiationDecH264,
+		"device_orientation": "0",
+		"screen_width":       "0",
+		"screen_height":      "0",
+	}}
+}
+
 // OfferHasVideo reports whether a parsed <offer> node advertises video — the presence of
 // a <video> child marks an inbound video call.
 func OfferHasVideo(offer *waBinary.Node) bool {

@@ -52,17 +52,11 @@ func TestAcceptAdvertisesVideo(t *testing.T) {
 	peer, creator := peerJID(), creatorJID()
 	accept := BuildAccept(&AcceptParams{
 		CallID: "CID", To: peer, CallCreator: creator,
-		AudioRates: []string{"16000"}, Video: true,
+		AudioRates: []string{"16000"}, RelayTe: make([]byte, 6), Video: true,
 	})
-	tags := childTags(t, accept)
-	hasVideo := false
-	for _, tg := range tags {
-		if tg == "video" {
-			hasVideo = true
-		}
-	}
-	if !hasVideo {
-		t.Errorf("accept tags = %v, want a video child", tags)
+	want := []string{"audio", "video", "te", "net", "encopt"}
+	if got := childTags(t, accept); !eqTags(got, want) {
+		t.Errorf("accept tags = %v, want %v", got, want)
 	}
 	video, ok := getChild(t, contentNodes(t, accept)[0], "video")
 	if !ok {
@@ -73,6 +67,43 @@ func TestAcceptAdvertisesVideo(t *testing.T) {
 	}
 	if orientation, _ := attrString(video, "device_orientation"); orientation != "0" {
 		t.Errorf("video accept device_orientation = %q, want 0", orientation)
+	}
+}
+
+func TestVideoPreacceptAdvertisesDecoder(t *testing.T) {
+	peer, creator := peerJID(), creatorJID()
+	pre := BuildPreaccept("CID", peer, creator, "wrap", []string{"16000"}, true)
+
+	want := []string{"audio", "video", "encopt", "capability"}
+	if got := childTags(t, pre); !eqTags(got, want) {
+		t.Errorf("video preaccept tags = %v, want %v", got, want)
+	}
+	action := contentNodes(t, pre)[0]
+	video, ok := getChild(t, action, "video")
+	if !ok {
+		t.Fatal("video preaccept child missing")
+	}
+	for attr, want := range map[string]string{
+		"dec":                "H264",
+		"device_orientation": "0",
+		"screen_width":       "0",
+		"screen_height":      "0",
+	} {
+		if got, _ := attrString(video, attr); got != want {
+			t.Errorf("video preaccept %s = %q, want %q", attr, got, want)
+		}
+	}
+	capability, ok := getChild(t, action, "capability")
+	if !ok {
+		t.Fatal("video preaccept capability missing")
+	}
+	gotCapability, ok := capability.Content.([]byte)
+	if !ok {
+		t.Fatalf("video preaccept capability content = %T, want []byte", capability.Content)
+	}
+	wantCapability := []byte{0x01, 0x05, 0xf7, 0x09, 0xe0, 0xbb, 0x13}
+	if !bytes.Equal(gotCapability, wantCapability) {
+		t.Errorf("video preaccept capability = %x, want %x", gotCapability, wantCapability)
 	}
 }
 
