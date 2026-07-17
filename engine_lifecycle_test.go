@@ -17,11 +17,12 @@ func testEngineWithOutgoingCall() (*engine, *Call) {
 	c.eng = newEngine(c)
 	call := &Call{eng: c.eng, id: "CID", peer: peerJID(), phase: CallPhaseCalling}
 	c.eng.calls["CID"] = &engineCall{
-		call:      call,
-		direction: CallDirectionOutgoing,
-		from:      peerJID(),
-		creator:   creatorJID(),
-		isVideo:   true,
+		call:        call,
+		direction:   CallDirectionOutgoing,
+		from:        peerJID(),
+		creator:     creatorJID(),
+		localVideo:  true,
+		remoteVideo: true,
 	}
 	return c.eng, call
 }
@@ -41,7 +42,7 @@ func senderVideoState(sender *videoSender) (active, gated bool) {
 func TestCallVideoUpgradeGatesUntilPeerAcceptAndCanStop(t *testing.T) {
 	eng, call := testEngineWithOutgoingCall()
 	m := eng.calls[call.ID()]
-	m.isVideo = false
+	m.localVideo = false
 	m.videoTx = &videoSender{}
 	var sent []waBinary.Node
 	eng.sendCallNode = func(_ context.Context, node waBinary.Node) error {
@@ -60,6 +61,9 @@ func TestCallVideoUpgradeGatesUntilPeerAcceptAndCanStop(t *testing.T) {
 	}
 
 	eng.onVideoStanza(videoStateNode(signaling.VideoStateUpgradeAccept))
+	if len(sent) != 2 || sent[1].GetChildren()[0].AttrGetter().Int("state") != signaling.VideoStateEnabled {
+		t.Fatalf("peer acceptance sent %#v, want state=1 announcement after state=4", sent)
+	}
 	if active, gated := senderVideoState(m.videoTx); !active || gated {
 		t.Fatalf("accepted sender state = active:%v gated:%v, want true,false", active, gated)
 	}
@@ -67,21 +71,58 @@ func TestCallVideoUpgradeGatesUntilPeerAcceptAndCanStop(t *testing.T) {
 	if err := call.StopVideo(); err != nil {
 		t.Fatalf("StopVideo: %v", err)
 	}
-	if len(sent) != 2 || sent[1].GetChildren()[0].AttrGetter().Int("state") != signaling.VideoStateStopped {
+	if len(sent) != 3 || sent[2].GetChildren()[0].AttrGetter().Int("state") != signaling.VideoStateStopped {
 		t.Fatalf("StopVideo sent %#v, want trailing state=6 stanza", sent)
 	}
 	if active, _ := senderVideoState(m.videoTx); active {
 		t.Fatal("video sender remained active after StopVideo")
 	}
-	if call.IsVideo() {
-		t.Fatal("call remained marked as video after StopVideo")
+	if call.IsSendingVideo() {
+		t.Fatal("call remained marked as sending video after StopVideo")
+	}
+	if !call.IsReceivingVideo() || !call.IsVideo() {
+		t.Fatal("stopping local video also stopped the peer video flow")
+	}
+}
+
+func TestSetVideoEnabledOnlyTogglesLocalFlow(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	m := eng.calls[call.ID()]
+	m.videoTx = &videoSender{active: true}
+	var states []int
+	eng.sendCallNode = func(_ context.Context, node waBinary.Node) error {
+		states = append(states, node.GetChildren()[0].AttrGetter().Int("state"))
+		return nil
+	}
+
+	if err := call.SetVideoEnabled(false); err != nil {
+		t.Fatalf("SetVideoEnabled(false): %v", err)
+	}
+	if active, _ := senderVideoState(m.videoTx); active {
+		t.Fatal("disabling local video left sender active")
+	}
+	if call.IsSendingVideo() || !call.IsReceivingVideo() {
+		t.Fatalf("disabled state = send:%v receive:%v, want false,true", call.IsSendingVideo(), call.IsReceivingVideo())
+	}
+
+	if err := call.SetVideoEnabled(true); err != nil {
+		t.Fatalf("SetVideoEnabled(true): %v", err)
+	}
+	if active, gated := senderVideoState(m.videoTx); !active || gated {
+		t.Fatalf("enabled sender state = active:%v gated:%v, want true,false", active, gated)
+	}
+	if !call.IsSendingVideo() || !call.IsReceivingVideo() {
+		t.Fatalf("enabled state = send:%v receive:%v, want true,true", call.IsSendingVideo(), call.IsReceivingVideo())
+	}
+	if len(states) != 2 || states[0] != signaling.VideoStateDisabled || states[1] != signaling.VideoStateEnabled {
+		t.Fatalf("toggle states = %v, want [0 1]", states)
 	}
 }
 
 func TestCallAcceptVideoSendsAcceptThenEnabled(t *testing.T) {
 	eng, call := testEngineWithOutgoingCall()
 	m := eng.calls[call.ID()]
-	m.isVideo = false
+	m.localVideo = false
 	m.videoTx = &videoSender{}
 	var states []int
 	eng.sendCallNode = func(_ context.Context, node waBinary.Node) error {
@@ -100,7 +141,7 @@ func TestCallAcceptVideoSendsAcceptThenEnabled(t *testing.T) {
 	}
 }
 
-func TestInboundVideoStopDisablesMedia(t *testing.T) {
+func TestInboundVideoStopOnlyDisablesRemoteFlow(t *testing.T) {
 	eng, call := testEngineWithOutgoingCall()
 	m := eng.calls[call.ID()]
 	m.videoTx = &videoSender{active: true}
@@ -112,18 +153,37 @@ func TestInboundVideoStopDisablesMedia(t *testing.T) {
 	if got.Raw != signaling.VideoStateStopped {
 		t.Fatalf("video callback state = %d, want 6", got.Raw)
 	}
-	if active, _ := senderVideoState(m.videoTx); active {
-		t.Fatal("inbound stop left video sender active")
+	if active, _ := senderVideoState(m.videoTx); !active {
+		t.Fatal("peer stopping video disabled the local sender")
 	}
-	if call.IsVideo() {
-		t.Fatal("inbound stop left call marked as video")
+	if !call.IsSendingVideo() || call.IsReceivingVideo() || !call.IsVideo() {
+		t.Fatalf("directional state after peer stop = send:%v receive:%v any:%v, want true,false,true",
+			call.IsSendingVideo(), call.IsReceivingVideo(), call.IsVideo())
+	}
+}
+
+func TestInboundVideoEnabledDoesNotRestartLocalFlow(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	m := eng.calls[call.ID()]
+	m.localVideo = false
+	m.remoteVideo = false
+	m.videoTx = &videoSender{}
+
+	eng.onVideoStanza(videoStateNode(signaling.VideoStateEnabled))
+
+	if active, _ := senderVideoState(m.videoTx); active {
+		t.Fatal("peer enabling video restarted the local sender")
+	}
+	if call.IsSendingVideo() || !call.IsReceivingVideo() {
+		t.Fatalf("directional state after peer enable = send:%v receive:%v, want false,true",
+			call.IsSendingVideo(), call.IsReceivingVideo())
 	}
 }
 
 func TestInboundVideoUpgradeWaitsForExplicitAcceptance(t *testing.T) {
 	eng, call := testEngineWithOutgoingCall()
 	m := eng.calls[call.ID()]
-	m.isVideo = false
+	m.localVideo = false
 	m.videoTx = &videoSender{}
 	var sent int
 	eng.sendCallNode = func(context.Context, waBinary.Node) error {
@@ -149,6 +209,7 @@ func TestInboundVideoUpgradeWaitsForExplicitAcceptance(t *testing.T) {
 func TestVideoAcceptanceRequestsSourceKeyframe(t *testing.T) {
 	eng, call := testEngineWithOutgoingCall()
 	eng.calls[call.ID()].videoTx = &videoSender{}
+	eng.sendCallNode = func(context.Context, waBinary.Node) error { return nil }
 	var requests int
 	call.OnVideoKeyframeRequest(func() { requests++ })
 

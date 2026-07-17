@@ -368,7 +368,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	}
 	e.mu.Lock()
 	if m := e.calls[callID]; m != nil {
-		vsender.active = m.isVideo
+		vsender.active = m.localVideo
 		vsender.sendGated = m.videoGate
 		m.videoTx = vsender
 	}
@@ -629,8 +629,6 @@ func videoRtpDurationSamples(duration time.Duration) uint32 {
 // videoSender packetizes encoded H.264 access units (Annex-B) into PT-97 RTP, E2E-SRTP
 // protects them with the video pipeline, and sends them to the relay. The send path is
 // fed encoded H.264 (e.g. from the VideoBridge / WebCodecs), not raw frames.
-//
-// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/call/callmanager_video.go#L49-L84
 //
 // NOT VALIDATED: the video send media path is unproven.
 type videoSender struct {

@@ -51,14 +51,15 @@ type engineCall struct {
 	creator types.JID // call-creator JID (for accept/relaylatency)
 	from    types.JID // the <call> "from" — where stanzas are addressed
 
-	direction CallDirection
-	codec     AudioCodec   // audio codec for this call, selected from voip_settings (MLow default)
-	isVideo   bool         // inbound offer advertised <video> (video call)
-	videoGate bool         // outbound upgrade is waiting for peer acceptance
-	videoTx   *videoSender // video send pipeline, live while media runs
-	rekeyPeer func(string) error
-	started   bool
-	cancel    context.CancelFunc // tears down this call's media goroutine
+	direction   CallDirection
+	codec       AudioCodec   // audio codec for this call, selected from voip_settings (MLow default)
+	localVideo  bool         // this client is sending, or has requested to send, video
+	remoteVideo bool         // the peer is sending video to this client
+	videoGate   bool         // outbound upgrade is waiting for peer acceptance
+	videoTx     *videoSender // video send pipeline, live while media runs
+	rekeyPeer   func(string) error
+	started     bool
+	cancel      context.CancelFunc // tears down this call's media goroutine
 
 	// The callee <accept> is deferred until the caller's <mute_v2> arrives.
 	acceptPending bool
@@ -141,7 +142,20 @@ func (e *engine) lookup(callID string) *engineCall {
 func (e *engine) callIsVideo(callID string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.calls[callID] != nil && e.calls[callID].isVideo
+	m := e.calls[callID]
+	return m != nil && (m.localVideo || m.remoteVideo)
+}
+
+func (e *engine) callIsSendingVideo(callID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.calls[callID] != nil && e.calls[callID].localVideo
+}
+
+func (e *engine) callIsReceivingVideo(callID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.calls[callID] != nil && e.calls[callID].remoteVideo
 }
 
 func (e *engine) transmitCallNode(ctx context.Context, node waBinary.Node) error {
@@ -186,13 +200,13 @@ func (e *engine) transitionVideo(callID string, transition int) error {
 	to, creator, sender := m.from, m.creator, m.videoTx
 	switch transition {
 	case signaling.VideoStateUpgradeRequestV2:
-		m.isVideo = true
+		m.localVideo = true
 		m.videoGate = true
 	case signaling.VideoStateUpgradeAccept:
-		m.isVideo = true
+		m.localVideo = true
 		m.videoGate = false
 	case signaling.VideoStateStopped:
-		m.isVideo = false
+		m.localVideo = false
 		m.videoGate = false
 	default:
 		e.mu.Unlock()
@@ -236,7 +250,7 @@ func (e *engine) transitionVideo(callID string, transition int) error {
 	e.mu.Lock()
 	var currentSender *videoSender
 	if current := e.calls[callID]; current == m {
-		current.isVideo = false
+		current.localVideo = false
 		current.videoGate = false
 		currentSender = current.videoTx
 	}
@@ -247,13 +261,56 @@ func (e *engine) transitionVideo(callID string, transition int) error {
 	return err
 }
 
+func (e *engine) setVideoEnabled(callID string, enabled bool) error {
+	e.mu.Lock()
+	m := e.calls[callID]
+	if m == nil || m.call == nil || m.call.State() == CallPhaseEnded {
+		e.mu.Unlock()
+		return errors.New("meowcaller: call is not active")
+	}
+	m.localVideo = enabled
+	m.videoGate = false
+	to, creator, sender := m.from, m.creator, m.videoTx
+	e.mu.Unlock()
+
+	if sender != nil {
+		if enabled {
+			sender.enable(false)
+		} else {
+			sender.disable()
+		}
+	}
+	state, dec := signaling.VideoStateDisabled, ""
+	if enabled {
+		state, dec = signaling.VideoStateEnabled, signaling.VideoStateDecH264
+	}
+	node := signaling.BuildVideoStateWithParams(signaling.VideoStateParams{
+		CallID: callID, To: to, CallCreator: creator, WrapperID: e.nextCallNodeID(),
+		State: state, Dec: dec,
+	})
+	err := e.transmitCallNode(context.Background(), node)
+	if err == nil || !enabled {
+		return err
+	}
+
+	e.mu.Lock()
+	if current := e.calls[callID]; current == m {
+		current.localVideo = false
+	}
+	e.mu.Unlock()
+	if sender != nil {
+		sender.disable()
+	}
+	return err
+}
+
 func (e *engine) setVideoOrientation(callID string, orientation int) error {
 	if orientation < 0 || orientation > 3 {
 		return fmt.Errorf("meowcaller: video orientation %d is outside 0..3", orientation)
 	}
 	e.mu.Lock()
 	m := e.calls[callID]
-	if m == nil || m.call == nil || m.call.State() == CallPhaseEnded || !m.isVideo {
+	if m == nil || m.call == nil || m.call.State() == CallPhaseEnded || !m.localVideo {
 		e.mu.Unlock()
 		return errors.New("meowcaller: call has no active video media")
 	}
@@ -346,7 +403,8 @@ func (e *engine) placeCall(ctx context.Context, target string, opts CallOptions)
 	m.creator = self
 	m.from = peerLID
 	m.direction = CallDirectionOutgoing
-	m.isVideo = opts.Video
+	m.localVideo = opts.Video
+	m.remoteVideo = opts.Video
 	e.mu.Unlock()
 
 	e.c.diag.Emit("keying", map[string]any{
@@ -407,10 +465,10 @@ func (e *engine) onOffer(ev *events.CallOffer) {
 	m.creator = ev.CallCreator
 	m.from = ev.From
 	m.direction = CallDirectionIncoming
-	// Detect a video call by the <video> child of the offer (ported from WaCalls).
-	// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/call/callmanager_signaling.go#L24
+	// A <video> child marks a call that starts with both video directions enabled.
 	isVideo := signaling.OfferHasVideo(ev.Data)
-	m.isVideo = isVideo
+	m.localVideo = isVideo
+	m.remoteVideo = isVideo
 	if r := findRelay(ev.Data); r != nil {
 		m.relay = parseRelayData(r)
 	}
@@ -479,7 +537,7 @@ func (e *engine) sendAccept(callID string, to, creator types.JID) {
 		e.mu.Unlock()
 		return
 	}
-	isVideo := m.isVideo
+	isVideo := m.localVideo || m.remoteVideo
 	m.acceptPending = false
 	e.mu.Unlock()
 
@@ -649,11 +707,11 @@ func (e *engine) onAccept(ev *events.CallAccept) {
 		Str("call_id", ev.CallID).
 		Str("from", ev.From.String()).
 		Str("platform", ev.RemotePlatform).
-		Bool("video", m.isVideo).
+		Bool("video", m.localVideo || m.remoteVideo).
 		Msg("peer accepted outgoing call")
 	e.c.diag.Emit("meta", map[string]any{
 		"event": "peer_accept", "call_id": ev.CallID,
-		"from": ev.From.String(), "platform": ev.RemotePlatform, "video": m.isVideo,
+		"from": ev.From.String(), "platform": ev.RemotePlatform, "video": m.localVideo || m.remoteVideo,
 	})
 	e.maybeStartMedia(ev.CallID)
 }
@@ -828,24 +886,50 @@ func (e *engine) onVideoStanza(v *waBinary.Node) {
 	}
 	sender := m.videoTx
 	call := m.call
+	to, creator := m.from, m.creator
 	requestKeyframe := false
+	disableSender := false
+	announceEnabled := false
 	switch state {
-	case signaling.VideoStateEnabled, signaling.VideoStateUpgradeAccept:
-		m.isVideo = true
+	case signaling.VideoStateEnabled:
+		m.remoteVideo = true
+	case signaling.VideoStateDisabled, signaling.VideoStateStopped:
+		m.remoteVideo = false
+	case signaling.VideoStateUpgradeAccept:
+		m.localVideo = true
 		m.videoGate = false
-		requestKeyframe = true
-	case signaling.VideoStateDisabled, signaling.VideoStateUpgradeReject,
-		signaling.VideoStateStopped, signaling.VideoStateUpgradeCancel:
-		m.isVideo = false
+		announceEnabled = true
+	case signaling.VideoStateUpgradeReject, signaling.VideoStateUpgradeCancel:
+		m.localVideo = false
 		m.videoGate = false
+		disableSender = true
 	}
 	e.mu.Unlock()
+	if announceEnabled {
+		node := signaling.BuildVideoStateWithParams(signaling.VideoStateParams{
+			CallID: callID, To: to, CallCreator: creator, WrapperID: e.nextCallNodeID(),
+			State: signaling.VideoStateEnabled,
+		})
+		if err := e.transmitCallNode(context.Background(), node); err != nil {
+			e.mu.Lock()
+			if current := e.calls[callID]; current == m {
+				current.localVideo = false
+				current.videoGate = false
+			}
+			e.mu.Unlock()
+			disableSender = true
+			announceEnabled = false
+			if e.c != nil {
+				e.c.log.Warn().Err(err).Str("call_id", callID).Msg("video enabled announcement failed")
+			}
+		} else {
+			requestKeyframe = true
+		}
+	}
 	if sender != nil {
-		switch state {
-		case signaling.VideoStateEnabled, signaling.VideoStateUpgradeAccept:
+		if announceEnabled {
 			sender.enable(false)
-		case signaling.VideoStateDisabled, signaling.VideoStateUpgradeReject,
-			signaling.VideoStateStopped, signaling.VideoStateUpgradeCancel:
+		} else if disableSender {
 			sender.disable()
 		}
 	}

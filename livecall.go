@@ -46,10 +46,20 @@ func (c *Call) State() CallPhase {
 	return c.phase
 }
 
-// IsVideo reports whether the inbound offer advertised video. Attach a VideoSink with
-// ReceiveVideo to receive the peer's H.264.
+// IsVideo reports whether either direction of the call currently has video.
 func (c *Call) IsVideo() bool {
 	return c.eng.callIsVideo(c.id)
+}
+
+// IsSendingVideo reports whether this client currently owns an active or pending
+// outbound video flow.
+func (c *Call) IsSendingVideo() bool {
+	return c.eng.callIsSendingVideo(c.id)
+}
+
+// IsReceivingVideo reports whether the peer currently owns an active inbound video flow.
+func (c *Call) IsReceivingVideo() bool {
+	return c.eng.callIsReceivingVideo(c.id)
 }
 
 // Answer accepts an inbound call (preaccept + accept) and brings media up. No-op error
@@ -73,9 +83,15 @@ func (c *Call) AcceptVideo() error {
 	return c.eng.transitionVideo(c.id, signaling.VideoStateUpgradeAccept)
 }
 
-// StopVideo downgrades the call to audio while preserving the call and audio media.
+// StopVideo stops this client's outbound video while preserving peer video and audio.
 func (c *Call) StopVideo() error {
 	return c.eng.transitionVideo(c.id, signaling.VideoStateStopped)
+}
+
+// SetVideoEnabled mutes or unmutes this client's outbound camera flow with state 0/1.
+// It does not change whether the peer's video is received.
+func (c *Call) SetVideoEnabled(enabled bool) error {
+	return c.eng.setVideoEnabled(c.id, enabled)
 }
 
 // SetVideoOrientation announces the local camera rotation as quarter turns clockwise.
