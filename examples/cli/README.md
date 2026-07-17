@@ -36,8 +36,8 @@ The `web` command prints an ephemeral localhost URL. Open it in Chromium, pair t
 test client from the QR code if needed, and use the controls to dial, answer, reject,
 hang up, start video, accept an upgrade, or stop video. The page encodes the local
 camera as H.264 constrained baseline at 640x480 and 15 fps, displays peer H.264, and
-honors peer keyframe requests and device orientation. Audio continues through the
-machine's default microphone and speaker.
+honors peer keyframe requests and device orientation. It also sends and displays call
+emoji reactions. Audio continues through the machine's default microphone and speaker.
 
 ## What it shows
 
@@ -52,6 +52,8 @@ call.Play(mic)                               // a Player streams a source (mic/f
 call.Receive(speaker)                        // a sink takes the peer's decoded audio
 call.OnReady(func() { ... })
 call.OnEnd(func(reason string) { ... })
+call.OnReaction(func(reaction meowcaller.CallReaction) { ... })
+call.SendReaction("👍")
 
 client.OnIncomingCall(func(c *meowcaller.Call) { c.Answer() /* or c.Reject() */ })
 ```

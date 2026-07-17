@@ -51,12 +51,13 @@ Core VoIP features are present:
 - Video calls, including calls that start with video
 - Mid-call audio-to-video upgrade, acceptance, rejection, cancellation, and downgrade
 - Camera orientation and authenticated video keyframe feedback
+- Send and receive call emoji reactions
 
 Things that are not yet implemented:
 
 - Opus codec fallback for clients not using MLOW (in progress; testing edge cases)
 - Group calls (WIP)
-- Call signalling features (raise hand, lobby, reactions)
+- Call signalling features (raise hand, lobby)
 
 ## Credits
 
