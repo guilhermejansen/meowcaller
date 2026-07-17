@@ -54,6 +54,24 @@ func TestAppDataReceiverDeduplicatesRetransmissions(t *testing.T) {
 	}
 }
 
+func TestIncomingAppDataDispatchesOneTransientCallReaction(t *testing.T) {
+	_, call := testEngineWithOutgoingCall()
+	var receiver appDataReceiver
+	var got []CallReaction
+	call.OnReaction(func(reaction CallReaction) { got = append(got, reaction) })
+	payload := encodeAppDataReaction(1, "😂")
+
+	if handled, err := handleAppDataReaction(call, &receiver, payload); err != nil || !handled {
+		t.Fatalf("first app-data reaction = (handled=%v, err=%v)", handled, err)
+	}
+	if handled, err := handleAppDataReaction(call, &receiver, payload); err != nil || handled {
+		t.Fatalf("duplicate app-data reaction = (handled=%v, err=%v), want ignored", handled, err)
+	}
+	if len(got) != 1 || got[0].Emoji != "😂" || got[0].Sender != call.Peer() || got[0].Removed {
+		t.Fatalf("dispatched reactions = %+v", got)
+	}
+}
+
 func TestAppDataSenderUsesCapturedRTPShape(t *testing.T) {
 	callKey := iota32()
 	const ssrc = 0x7f4d310b

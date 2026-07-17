@@ -145,6 +145,10 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	if err != nil {
 		return err
 	}
+	appDataSelfSsrc, err := rtp.DeriveWasmParticipantSsrc(callID, selfParticipantID, rtp.AppDataSlotWord, log)
+	if err != nil {
+		return err
+	}
 	streamSsrcs, err := rtp.DeriveWasmRelayStreamSsrcs(callID, selfParticipantID, log)
 	if err != nil {
 		return err
@@ -174,9 +178,10 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		Str("peer_lid", peerLID).
 		Str("ssrc", fmt.Sprintf("0x%08x", ssrc)).
 		Str("video_ssrc", fmt.Sprintf("0x%08x", videoSelfSsrc)).
+		Str("app_data_ssrc", fmt.Sprintf("0x%08x", appDataSelfSsrc)).
 		Msg("media session")
 	e.c.diag.Emit("ssrc", map[string]any{
-		"call_id": callID, "ssrc": ssrc, "video_ssrc": videoSelfSsrc,
+		"call_id": callID, "ssrc": ssrc, "video_ssrc": videoSelfSsrc, "app_data_ssrc": appDataSelfSsrc,
 		"stream_ssrcs": streamSsrcs, "self_lid": selfLID,
 		"participant_id": selfParticipantID,
 	})
@@ -319,11 +324,38 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	if err != nil {
 		return err
 	}
+	rxAppDataPipe, err := NewMediaPipeline(callKey, selfLID, peerLID, appDataSelfSsrc, FrameSamples, WithLogger(log))
+	if err != nil {
+		return err
+	}
+	var peerAppDataSsrc atomic.Uint32
+	setPeerAppDataSsrc := func(peer string) error {
+		ssrc, err := rtp.DeriveWasmParticipantSsrc(
+			callID,
+			rtp.FormatE2ESrtpParticipantID(peer),
+			rtp.AppDataSlotWord,
+			log,
+		)
+		if err != nil {
+			return err
+		}
+		peerAppDataSsrc.Store(ssrc)
+		return nil
+	}
+	if err := setPeerAppDataSsrc(peerLID); err != nil {
+		return err
+	}
 	rekeyPeer := func(answeringPeer string) error {
 		if err := rxPipe.RekeyRecv(callKey, answeringPeer); err != nil {
 			return err
 		}
 		if err := rxVideoPipe.RekeyRecv(callKey, answeringPeer); err != nil {
+			return err
+		}
+		if err := rxAppDataPipe.RekeyRecv(callKey, answeringPeer); err != nil {
+			return err
+		}
+		if err := setPeerAppDataSsrc(answeringPeer); err != nil {
 			return err
 		}
 		return peerRtcp.rekey(callKey, answeringPeer)
@@ -350,6 +382,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	}()
 	var videoDepack rtp.H264Depacketizer
 	var videoAU []byte
+	var appDataRx appDataReceiver
 
 	// Video send: a second WARP pipeline on our video SSRC, registered on the call so
 	// Call.SendVideoFrame can push encoded H.264 to the relay. Cleared when the loop exits.
@@ -366,20 +399,36 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		ch: ch, ssrc: videoSelfSsrc, callID: callID, keyframeRequired: true,
 		log: log, diag: e.c.diag,
 	}
+	txAppDataPipe, err := NewMediaPipeline(callKey, selfLID, peerLID, appDataSelfSsrc, FrameSamples, WithLogger(log))
+	if err != nil {
+		return err
+	}
+	appSender := newAppDataSender(txAppDataPipe, appDataSelfSsrc, func(packet []byte) (int, error) {
+		if header, ok := rtp.ParseRtpHeader(packet); ok {
+			e.c.diag.Emit("app_data", map[string]any{
+				"event": "out", "ssrc": header.Ssrc, "seq": header.SequenceNumber,
+				"ts": header.Timestamp, "pt": header.PayloadType, "bytes": len(packet),
+			})
+		}
+		return ch.Send(packet)
+	})
 	e.mu.Lock()
 	if m := e.calls[callID]; m != nil {
 		vsender.active = m.localVideo
 		vsender.sendGated = m.videoGate
 		m.videoTx = vsender
+		m.appDataTx = appSender
 	}
 	e.mu.Unlock()
 	defer func() {
+		appSender.close()
 		vsender.mu.Lock()
 		vsender.ch = nil
 		vsender.mu.Unlock()
 		e.mu.Lock()
 		if m := e.calls[callID]; m != nil {
 			m.videoTx = nil
+			m.appDataTx = nil
 		}
 		e.mu.Unlock()
 	}()
@@ -427,7 +476,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	}()
 
 	buf := make([]byte, 1500)
-	var rtpIn, rtpSeen, unprotectFail, rtpInspect, vidIn, videoUnprotectFail, videoFrameIn, videoSinkMissing, rtcpIn, rtcpAuthFail uint64
+	var rtpIn, rtpSeen, unprotectFail, rtpInspect, vidIn, appDataIn, appDataUnprotectFail, videoUnprotectFail, videoFrameIn, videoSinkMissing, rtcpIn, rtcpAuthFail uint64
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -501,7 +550,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		}
 		vh, vok := rtp.ParseRtpHeader(pkt)
 		if vok {
-			if rtpInspect < 20 || vh.PayloadType == rtp.RtpPayloadTypeH264 {
+			if rtpInspect < 20 || vh.PayloadType == rtp.RtpPayloadTypeH264 || vh.PayloadType == rtp.RtpPayloadTypeAppData {
 				log.Debug().
 					Uint8("payload_type", vh.PayloadType).
 					Uint32("ssrc", vh.Ssrc).
@@ -513,11 +562,50 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 			}
 			rtpInspect++
 		}
-		// Demux: H.264 (PT 97) is the peer's video; route it to the video pipeline and
-		// reassemble Annex-B access units, emitting each on the RTP marker bit. Anything else
-		// is audio. Ported from WaCalls callmanager_video.handleVideoRelayData.
+		if !vok {
+			continue
+		}
+		kind := classifyMediaPayload(vh)
+		if kind == mediaPayloadAppData {
+			wantSsrc := peerAppDataSsrc.Load()
+			if vh.Ssrc != wantSsrc {
+				log.Warn().Uint32("ssrc", vh.Ssrc).Uint32("expected_ssrc", wantSsrc).Msg("dropping app-data RTP from unexpected SSRC")
+				e.c.diag.Emit("app_data", map[string]any{
+					"event": "ssrc_mismatch", "ssrc": vh.Ssrc, "expected_ssrc": wantSsrc,
+				})
+				continue
+			}
+			hdr, payload, ok := rxAppDataPipe.UnprotectAudio(pkt)
+			if !ok {
+				if appDataUnprotectFail++; appDataUnprotectFail == 1 {
+					log.Warn().Uint32("ssrc", vh.Ssrc).Uint16("seq", vh.SequenceNumber).Msg("app-data RTP arrived but failed to unprotect")
+				}
+				e.c.diag.Emit("app_data", map[string]any{"event": "unprotect_failed", "ssrc": vh.Ssrc, "seq": vh.SequenceNumber})
+				continue
+			}
+			handled, err := handleAppDataReaction(call, &appDataRx, payload)
+			if err != nil {
+				log.Warn().Err(err).Uint32("ssrc", hdr.Ssrc).Uint16("seq", hdr.SequenceNumber).Msg("invalid RTC app-data payload")
+				e.c.diag.Emit("app_data", map[string]any{
+					"event": "decode_failed", "ssrc": hdr.Ssrc, "seq": hdr.SequenceNumber,
+					"payload_hex": hex.EncodeToString(payload), "error": err.Error(),
+				})
+				continue
+			}
+			e.c.diag.Emit("app_data", map[string]any{
+				"event": "in", "ssrc": hdr.Ssrc, "seq": hdr.SequenceNumber,
+				"ts": hdr.Timestamp, "handled": handled, "payload_hex": hex.EncodeToString(payload),
+			})
+			if handled {
+				if appDataIn++; appDataIn == 1 {
+					log.Info().Uint32("ssrc", hdr.Ssrc).Msg("first RTC call reaction received")
+				}
+			}
+			continue
+		}
+		// Demux H.264 (PT 97) to video and emit Annex-B access units on the marker bit.
 		// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/call/callmanager_video.go#L86-L126
-		if vok && vh.PayloadType == rtp.RtpPayloadTypeH264 {
+		if kind == mediaPayloadVideo {
 			_, vpayload, vunok := rxVideoPipe.UnprotectAudio(pkt)
 			if !vunok {
 				if videoUnprotectFail++; videoUnprotectFail == 1 {
@@ -557,6 +645,14 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 				log.Info().Uint32("ssrc", vh.Ssrc).Msg("first video RTP demuxed from relay (NOT VALIDATED)")
 				e.c.diag.Emit("meta", map[string]any{"event": "first_video_rtp_in", "call_id": callID, "ssrc": vh.Ssrc})
 			}
+			continue
+		}
+		if kind != mediaPayloadAudio {
+			log.Debug().Uint8("payload_type", vh.PayloadType).Uint32("ssrc", vh.Ssrc).Msg("dropping unknown RTP payload")
+			e.c.diag.Emit("rtp", map[string]any{
+				"event": "unknown_payload", "pt": vh.PayloadType, "ssrc": vh.Ssrc,
+				"seq": vh.SequenceNumber, "ts": vh.Timestamp,
+			})
 			continue
 		}
 		hdr, payload, ok := rxPipe.UnprotectAudio(pkt)

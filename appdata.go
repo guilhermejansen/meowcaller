@@ -149,6 +149,22 @@ func (r *appDataReceiver) receive(payload []byte) (appDataReaction, bool, error)
 	return appDataReaction{}, false, nil
 }
 
+func handleAppDataReaction(call *Call, receiver *appDataReceiver, payload []byte) (bool, error) {
+	reaction, ok, err := receiver.receive(payload)
+	if err != nil || !ok || call == nil {
+		return false, err
+	}
+	value := CallReaction{
+		Emoji:   reaction.emoji,
+		Sender:  call.Peer(),
+		Removed: reaction.emoji == "",
+	}
+	if fn := call.onReactionFn(); fn != nil {
+		fn(value)
+	}
+	return true, nil
+}
+
 type appDataSender struct {
 	mu                 sync.Mutex
 	pipe               *MediaPipeline
