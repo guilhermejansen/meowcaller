@@ -21,8 +21,10 @@ const VideoCodecH264 = "h264"
 const VideoStateDecH264 = "H264"
 
 const (
-	videoOfferEncH264 = VideoCodecH264
-	videoOfferDecH264 = VideoCodecH264
+	// Captured iPhone offers use this spelling. The tested iPhone receipts but does
+	// not answer initial offers using h264/h264 or the legacy orientation attribute.
+	videoOfferEncH264 = "h.264"
+	videoOfferDecH264 = VideoStateDecH264
 )
 
 // Observed <video> "state" values. 1 = active (video on) and 11 = mid-call upgrade (carries
@@ -55,7 +57,6 @@ func videoOfferNode() waBinary.Node {
 	return waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{
 		"enc":                videoOfferEncH264,
 		"dec":                videoOfferDecH264,
-		"orientation":        "0",
 		"screen_width":       "1920",
 		"screen_height":      "1080",
 		"device_orientation": "0",
