@@ -180,6 +180,30 @@ func TestInboundVideoEnabledDoesNotRestartLocalFlow(t *testing.T) {
 	}
 }
 
+func TestInboundVideoEnabledAcceptsPendingLocalUpgrade(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	m := eng.calls[call.ID()]
+	m.localVideo = true
+	m.remoteVideo = false
+	m.videoGate = true
+	m.videoTx = &videoSender{active: true, sendGated: true}
+	var keyframeRequests int
+	call.OnVideoKeyframeRequest(func() { keyframeRequests++ })
+
+	eng.onVideoStanza(videoStateNode(signaling.VideoStateEnabled))
+
+	if active, gated := senderVideoState(m.videoTx); !active || gated {
+		t.Fatalf("pending sender after peer enabled = active:%v gated:%v, want true,false", active, gated)
+	}
+	if !call.IsSendingVideo() || !call.IsReceivingVideo() {
+		t.Fatalf("video flows after peer enabled = send:%v receive:%v, want true,true",
+			call.IsSendingVideo(), call.IsReceivingVideo())
+	}
+	if keyframeRequests != 1 {
+		t.Fatalf("keyframe requests = %d, want 1", keyframeRequests)
+	}
+}
+
 func TestInboundVideoUpgradeWaitsForExplicitAcceptance(t *testing.T) {
 	eng, call := testEngineWithOutgoingCall()
 	m := eng.calls[call.ID()]

@@ -905,10 +905,16 @@ func (e *engine) onVideoStanza(v *waBinary.Node) {
 	to, creator := m.from, m.creator
 	requestKeyframe := false
 	disableSender := false
+	enableSender := false
 	announceEnabled := false
 	switch state {
 	case signaling.VideoStateEnabled:
 		m.remoteVideo = true
+		if m.localVideo && m.videoGate {
+			m.videoGate = false
+			enableSender = true
+			requestKeyframe = true
+		}
 	case signaling.VideoStateDisabled, signaling.VideoStateStopped:
 		m.remoteVideo = false
 	case signaling.VideoStateUpgradeAccept:
@@ -939,11 +945,12 @@ func (e *engine) onVideoStanza(v *waBinary.Node) {
 				e.c.log.Warn().Err(err).Str("call_id", callID).Msg("video enabled announcement failed")
 			}
 		} else {
+			enableSender = true
 			requestKeyframe = true
 		}
 	}
 	if sender != nil {
-		if announceEnabled {
+		if enableSender {
 			sender.enable(false)
 		} else if disableSender {
 			sender.disable()
