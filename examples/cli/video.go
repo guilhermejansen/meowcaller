@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -18,8 +19,7 @@ import (
 // meowcaller Call API. This is a demo/dev tool and lives in the example, not the library —
 // the library exposes only Call.OnVideoFrame / Call.SendVideoFrame / Call.OnVideoState.
 //
-// Mirrors WaCalls's React + WebCodecs client (see README Credits), collapsed into one
-// self-contained Go file with no JS build step.
+// The page is self-contained and uses WebCodecs directly, with no JS build step.
 type videoBridge struct {
 	ln  net.Listener
 	srv *http.Server
@@ -28,6 +28,7 @@ type videoBridge struct {
 	mu          sync.Mutex
 	subs        map[chan vbMsg]struct{}
 	onFrame     func([]byte)
+	onControl   func(vbControl) error
 	orientation int
 	closed      bool
 }
@@ -37,6 +38,12 @@ type videoBridge struct {
 type vbMsg struct {
 	event string
 	data  []byte
+}
+
+type vbControl struct {
+	Action      string `json:"action"`
+	Target      string `json:"target,omitempty"`
+	Orientation int    `json:"orientation,omitempty"`
 }
 
 // newVideoBridge starts a bridge on a free 127.0.0.1 port.
@@ -50,6 +57,7 @@ func newVideoBridge(log zerolog.Logger) (*videoBridge, error) {
 	mux.HandleFunc("/", vb.handleIndex)
 	mux.HandleFunc("/in", vb.handleIn)
 	mux.HandleFunc("/out", vb.handleOut)
+	mux.HandleFunc("/control", vb.handleControl)
 	vb.srv = &http.Server{Handler: mux}
 	go func() {
 		if err := vb.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -101,6 +109,23 @@ func (vb *videoBridge) OnFrame(fn func([]byte)) {
 	vb.mu.Lock()
 	vb.onFrame = fn
 	vb.mu.Unlock()
+}
+
+func (vb *videoBridge) OnControl(fn func(vbControl) error) {
+	vb.mu.Lock()
+	vb.onControl = fn
+	vb.mu.Unlock()
+}
+
+func (vb *videoBridge) PublishState(state any) {
+	data, err := json.Marshal(state)
+	if err == nil {
+		vb.broadcast(vbMsg{event: "state", data: data})
+	}
+}
+
+func (vb *videoBridge) RequestKeyframe() {
+	vb.broadcast(vbMsg{event: "keyframe", data: []byte("1")})
 }
 
 // Close stops the server and releases page subscriptions.
@@ -184,6 +209,41 @@ func (vb *videoBridge) handleOut(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (vb *videoBridge) handleControl(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var command vbControl
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&command); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	valid := map[string]bool{
+		"dial_audio": true, "dial_video": true, "answer": true, "reject": true,
+		"start_video": true, "accept_video": true, "stop_video": true,
+		"hangup": true, "orientation": true,
+	}
+	if !valid[command.Action] {
+		http.Error(w, "unknown action", http.StatusBadRequest)
+		return
+	}
+	vb.mu.Lock()
+	fn := vb.onControl
+	vb.mu.Unlock()
+	if fn == nil {
+		http.Error(w, "call controller unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := fn(command); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (vb *videoBridge) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -194,72 +254,45 @@ func (vb *videoBridge) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 const videoBridgePage = `<!doctype html>
-<html><head><meta charset="utf-8"><title>meowcaller video</title>
-<style>body{font-family:sans-serif;background:#111;color:#eee;margin:0;padding:1rem}
-.wrap{display:flex;gap:1rem;flex-wrap:wrap}.box{position:relative}
-canvas,video{background:#000;border-radius:8px;width:480px}#remote{transition:transform .2s}
-button{padding:.5rem 1rem;margin-top:.5rem}#log{font:12px monospace;color:#9a9;white-space:pre-wrap}</style></head>
-<body>
-<h3>meowcaller video bridge</h3>
-<div class="wrap">
-  <div class="box"><div>peer</div><canvas id="remote" width="480" height="360"></canvas></div>
-  <div class="box"><div>you</div><video id="local" autoplay muted playsinline></video></div>
-</div>
-<button id="cam">Start camera (send video)</button>
-<div id="log"></div>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>meowcaller call console</title>
+<style>
+:root{color-scheme:dark;--bg:#111315;--panel:#1b1f22;--line:#353b40;--text:#f1f3f4;--muted:#a7afb5;--green:#39b87f;--red:#e25d5d;--amber:#d5a542}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,sans-serif;letter-spacing:0}
+header{height:56px;padding:0 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:16px}h1{font-size:16px;margin:0}.state{color:var(--muted);margin-left:auto}
+main{max-width:1280px;margin:auto;padding:16px}.toolbar{display:grid;grid-template-columns:minmax(180px,1fr) repeat(2,auto);gap:8px;margin-bottom:10px}
+input,button{height:38px;border:1px solid var(--line);border-radius:6px;background:#202529;color:var(--text);font:inherit;letter-spacing:0}
+input{padding:0 11px;min-width:0}button{padding:0 13px;cursor:pointer;white-space:nowrap}button:hover{border-color:#68727a}button.primary{background:#176846;border-color:#25865e}button.danger{background:#7b2929;border-color:#a83b3b}
+.actions{display:flex;gap:8px;overflow-x:auto;padding-bottom:10px}.media{display:grid;grid-template-columns:1fr 1fr;gap:12px;border-top:1px solid var(--line);padding-top:14px}
+.pane{min-width:0}.pane-head{height:42px;color:var(--muted);font-size:12px;text-transform:uppercase;display:flex;align-items:center;justify-content:space-between}.pane-head button{height:32px}
+canvas,video{display:block;width:100%;aspect-ratio:4/3;object-fit:contain;background:#050607;border:1px solid var(--line);border-radius:6px}#remote{transition:transform .2s}
+#log{height:150px;overflow:auto;margin-top:12px;padding:10px;border:1px solid var(--line);background:#0b0d0e;color:#b8d8c8;font:12px ui-monospace,monospace;white-space:pre-wrap}
+@media(max-width:760px){header{padding:0 12px}.toolbar{grid-template-columns:1fr 1fr}.toolbar input{grid-column:1/-1}.media{grid-template-columns:1fr}.actions{flex-wrap:wrap}button{flex:1 0 auto}}
+</style></head><body>
+<header><h1>meowcaller call console</h1><div id="state" class="state">idle</div></header>
+<main>
+  <div class="toolbar"><input id="target" inputmode="tel" placeholder="WhatsApp number or LID"><button id="dialAudio">Dial audio</button><button id="dialVideo" class="primary">Dial video</button></div>
+  <div class="actions"><button id="answer">Answer</button><button id="reject">Reject</button><button id="startVideo">Upgrade to video</button><button id="acceptVideo">Accept video</button><button id="stopVideo">Stop video</button><button id="hangup" class="danger">Hang up</button></div>
+  <div class="media">
+    <section class="pane"><div class="pane-head"><span>WhatsApp peer</span><span id="remoteMeta">waiting</span></div><canvas id="remote" width="640" height="480"></canvas></section>
+    <section class="pane"><div class="pane-head"><span>Local camera</span><button id="cam">Start camera</button></div><video id="local" autoplay muted playsinline></video></section>
+  </div>
+  <div id="log"></div>
+</main>
 <script>
-const log = (...a) => { document.getElementById('log').textContent += a.join(' ') + '\n'; };
-if (!('VideoDecoder' in window)) log('WebCodecs not supported — use Chrome/Edge over http://127.0.0.1');
-
-// ---- orientation: rotate the peer canvas to display upright ----
-const remote = document.getElementById('remote');
-const es = new EventSource('/in');
-es.addEventListener('orient', e => { remote.style.transform = 'rotate(' + ((+e.data) * 90) + 'deg)'; });
-
-// ---- inbound: peer H.264 (Annex-B) -> WebCodecs decode -> canvas ----
-const ctx = remote.getContext('2d');
-let decoder = null, started = false;
-function hasKeyNAL(d){
-  for (let i=0;i+4<d.length;i++){
-    if (d[i]===0&&d[i+1]===0&&d[i+2]===1){ const t=d[i+3]&0x1f; if(t===5||t===7) return true; }
-    else if (d[i]===0&&d[i+1]===0&&d[i+2]===0&&d[i+3]===1){ const t=d[i+4]&0x1f; if(t===5||t===7) return true; }
-  }
-  return false;
-}
-function ensureDecoder(){
-  if (decoder && decoder.state!=='closed') return decoder;
-  decoder = new VideoDecoder({
-    output: f => { remote.width=f.displayWidth; remote.height=f.displayHeight; ctx.drawImage(f,0,0); f.close(); },
-    error: e => log('decoder', e.message),
-  });
-  decoder.configure({ codec:'avc1.42E01F', optimizeForLatency:true });
-  return decoder;
-}
-es.onmessage = ev => {
-  const au = Uint8Array.from(atob(ev.data), c => c.charCodeAt(0));
-  const key = hasKeyNAL(au);
-  if (!started && !key) return;
-  started = true;
-  try { ensureDecoder().decode(new EncodedVideoChunk({ type: key?'key':'delta', timestamp: performance.now()*1000, data: au })); }
-  catch(e){ log('decode', e.message); started=false; }
-};
-es.onerror = () => log('sse disconnected');
-
-// ---- outbound: camera -> WebCodecs encode (Annex-B) -> POST /out ----
-document.getElementById('cam').onclick = async () => {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video:{width:640,height:480,frameRate:15} });
-    document.getElementById('local').srcObject = stream;
-    const track = stream.getVideoTracks()[0];
-    const enc = new VideoEncoder({
-      output: chunk => { const b=new Uint8Array(chunk.byteLength); chunk.copyTo(b); fetch('/out',{method:'POST',body:b}); },
-      error: e => log('encoder', e.message),
-    });
-    enc.configure({ codec:'avc1.42E01F', avc:{format:'annexb'}, width:640, height:480, framerate:15, bitrate:500000, latencyMode:'realtime' });
-    const reader = new MediaStreamTrackProcessor({track}).readable.getReader();
-    let n=0;
-    for(;;){ const {value:frame,done}=await reader.read(); if(done)break; enc.encode(frame,{keyFrame:(n++%30===0)}); frame.close(); }
-  } catch(e){ log('camera', e.message); }
-};
-</script></body></html>
-`
+const $=id=>document.getElementById(id), log=(...a)=>{$('log').textContent+=a.join(' ')+'\n';$('log').scrollTop=$('log').scrollHeight};
+const control=async(action,extra={})=>{const r=await fetch('/control',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,...extra})});if(!r.ok)throw Error((await r.text()).trim())};
+const invoke=(action,extra)=>control(action,extra).catch(e=>log(action,e.message));
+$('dialAudio').onclick=()=>invoke('dial_audio',{target:$('target').value.trim()});$('dialVideo').onclick=()=>invoke('dial_video',{target:$('target').value.trim()});
+$('answer').onclick=()=>invoke('answer');$('reject').onclick=()=>invoke('reject');$('startVideo').onclick=()=>invoke('start_video');$('acceptVideo').onclick=()=>invoke('accept_video');$('stopVideo').onclick=()=>invoke('stop_video');$('hangup').onclick=()=>invoke('hangup');
+if(!('VideoDecoder'in window))log('WebCodecs unavailable in this browser');
+const remote=$('remote'),paint=remote.getContext('2d'),es=new EventSource('/in');let decoder=null,decodeStarted=false,forceKeyframe=true;
+function keyNAL(d){for(let i=0;i+4<d.length;i++){let p=-1;if(d[i]===0&&d[i+1]===0&&d[i+2]===1)p=i+3;else if(d[i]===0&&d[i+1]===0&&d[i+2]===0&&d[i+3]===1)p=i+4;if(p>=0){const t=d[p]&31;if(t===5||t===7)return true}}return false}
+function getDecoder(){if(decoder&&decoder.state!=='closed')return decoder;decoder=new VideoDecoder({output:f=>{remote.width=f.displayWidth;remote.height=f.displayHeight;paint.drawImage(f,0,0);f.close();$('remoteMeta').textContent=remote.width+'x'+remote.height},error:e=>log('decoder',e.message)});decoder.configure({codec:'avc1.42E01F',optimizeForLatency:true});return decoder}
+es.onmessage=e=>{const au=Uint8Array.from(atob(e.data),c=>c.charCodeAt(0)),key=keyNAL(au);if(!decodeStarted&&!key)return;decodeStarted=true;try{getDecoder().decode(new EncodedVideoChunk({type:key?'key':'delta',timestamp:performance.now()*1000,data:au}))}catch(err){log('decode',err.message);decodeStarted=false}};
+es.addEventListener('orient',e=>{remote.style.transform='rotate('+(+e.data*90)+'deg)'});es.addEventListener('keyframe',()=>{forceKeyframe=true;log('peer requested keyframe')});
+es.addEventListener('state',e=>{const s=JSON.parse(e.data);$('state').textContent=s.event+(s.peer?' / '+s.peer:'');log(new Date().toLocaleTimeString(),JSON.stringify(s))});es.onerror=()=>log('event stream disconnected');
+let stream=null,encoder=null,reader=null,upload=Promise.resolve();
+async function stopCamera(){if(reader)await reader.cancel().catch(()=>{});if(encoder&&encoder.state!=='closed')encoder.close();if(stream)stream.getTracks().forEach(t=>t.stop());stream=encoder=reader=null;$('local').srcObject=null;$('cam').textContent='Start camera'}
+$('cam').onclick=async()=>{if(stream){await stopCamera();return}try{stream=await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,frameRate:{ideal:15,max:15}}});$('local').srcObject=stream;$('cam').textContent='Stop camera';const track=stream.getVideoTracks()[0];encoder=new VideoEncoder({output:chunk=>{const b=new Uint8Array(chunk.byteLength);chunk.copyTo(b);upload=upload.then(()=>fetch('/out',{method:'POST',body:b})).then(r=>{if(!r.ok)throw Error('video upload '+r.status)}).catch(e=>log(e.message))},error:e=>log('encoder',e.message)});encoder.configure({codec:'avc1.42E01F',avc:{format:'annexb'},width:640,height:480,framerate:15,bitrate:500000,latencyMode:'realtime'});reader=new MediaStreamTrackProcessor({track}).readable.getReader();let n=0;for(;;){const{value:f,done}=await reader.read();if(done)break;if(encoder.encodeQueueSize<2){const key=forceKeyframe||n%15===0;forceKeyframe=false;encoder.encode(f,{keyFrame:key});n++}f.close()}}catch(e){log('camera',e.message);await stopCamera()}};
+</script></body></html>`
