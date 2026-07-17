@@ -32,8 +32,9 @@ import (
 type engine struct {
 	c *Client
 
-	mu    sync.Mutex
-	calls map[string]*engineCall // keyed by call-id
+	mu           sync.Mutex
+	calls        map[string]*engineCall // keyed by call-id
+	sendCallNode func(context.Context, waBinary.Node) error
 }
 
 // engineCall is the engine's per-call state: the public Call handle plus the inputs
@@ -53,6 +54,7 @@ type engineCall struct {
 	direction CallDirection
 	codec     AudioCodec   // audio codec for this call, selected from voip_settings (MLow default)
 	isVideo   bool         // inbound offer advertised <video> (video call)
+	videoGate bool         // outbound upgrade is waiting for peer acceptance
 	videoTx   *videoSender // video send pipeline, live while media runs
 	started   bool
 	cancel    context.CancelFunc // tears down this call's media goroutine
@@ -63,7 +65,13 @@ type engineCall struct {
 
 // newEngine creates the engine for a Client.
 func newEngine(c *Client) *engine {
-	return &engine{c: c, calls: map[string]*engineCall{}}
+	e := &engine{c: c, calls: map[string]*engineCall{}}
+	if c != nil && c.wa != nil {
+		e.sendCallNode = func(ctx context.Context, node waBinary.Node) error {
+			return c.wa.DangerousInternals().SendNode(ctx, node)
+		}
+	}
+	return e
 }
 
 // onEndFn returns the Call's OnEnd listener under its lock (the field is unexported
@@ -129,6 +137,28 @@ func (e *engine) lookup(callID string) *engineCall {
 	return e.calls[callID]
 }
 
+func (e *engine) callIsVideo(callID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.calls[callID] != nil && e.calls[callID].isVideo
+}
+
+func (e *engine) transmitCallNode(ctx context.Context, node waBinary.Node) error {
+	if e.sendCallNode == nil {
+		return errors.New("meowcaller: call signaling is unavailable")
+	}
+	return e.sendCallNode(ctx, node)
+}
+
+func (e *engine) nextCallNodeID() string {
+	if e.c != nil && e.c.wa != nil {
+		return e.c.wa.GenerateMessageID()
+	}
+	var id [8]byte
+	_, _ = rand.Read(id[:])
+	return strings.ToUpper(hex.EncodeToString(id[:]))
+}
+
 // sendVideoFrame packetizes one encoded H.264 access unit and sends it to the relay, if a
 // video send pipeline is live for the call.
 func (e *engine) sendVideoFrame(callID string, au []byte, duration time.Duration) error {
@@ -143,6 +173,96 @@ func (e *engine) sendVideoFrame(callID string, au []byte, duration time.Duration
 	}
 	vs.send(au, duration)
 	return nil
+}
+
+func (e *engine) transitionVideo(callID string, transition int) error {
+	e.mu.Lock()
+	m := e.calls[callID]
+	if m == nil || m.call == nil || m.call.State() == CallPhaseEnded {
+		e.mu.Unlock()
+		return errors.New("meowcaller: call is not active")
+	}
+	to, creator, sender := m.from, m.creator, m.videoTx
+	switch transition {
+	case signaling.VideoStateUpgradeRequestV2:
+		m.isVideo = true
+		m.videoGate = true
+	case signaling.VideoStateUpgradeAccept:
+		m.isVideo = true
+		m.videoGate = false
+	case signaling.VideoStateStopped:
+		m.isVideo = false
+		m.videoGate = false
+	default:
+		e.mu.Unlock()
+		return fmt.Errorf("meowcaller: unsupported local video transition %d", transition)
+	}
+	e.mu.Unlock()
+	if sender != nil {
+		if transition == signaling.VideoStateStopped {
+			sender.disable()
+		} else {
+			sender.enable(transition == signaling.VideoStateUpgradeRequestV2)
+		}
+	}
+
+	build := func(state int, dec string, orientation *int) waBinary.Node {
+		return signaling.BuildVideoStateWithParams(signaling.VideoStateParams{
+			CallID: callID, To: to, CallCreator: creator, WrapperID: e.nextCallNodeID(),
+			State: state, Dec: dec, DeviceOrientation: orientation,
+		})
+	}
+	send := func(state int, dec string, orientation *int) error {
+		return e.transmitCallNode(context.Background(), build(state, dec, orientation))
+	}
+
+	var err error
+	switch transition {
+	case signaling.VideoStateUpgradeRequestV2:
+		err = send(transition, signaling.VideoDecRequest, nil)
+	case signaling.VideoStateUpgradeAccept:
+		if err = send(transition, signaling.VideoDecAccept, nil); err == nil {
+			err = send(signaling.VideoStateEnabled, "", nil)
+		}
+	case signaling.VideoStateStopped:
+		orientation := 0
+		err = send(transition, "", &orientation)
+	}
+	if err == nil || transition == signaling.VideoStateStopped {
+		return err
+	}
+
+	e.mu.Lock()
+	var currentSender *videoSender
+	if current := e.calls[callID]; current == m {
+		current.isVideo = false
+		current.videoGate = false
+		currentSender = current.videoTx
+	}
+	e.mu.Unlock()
+	if currentSender != nil {
+		currentSender.disable()
+	}
+	return err
+}
+
+func (e *engine) setVideoOrientation(callID string, orientation int) error {
+	if orientation < 0 || orientation > 3 {
+		return fmt.Errorf("meowcaller: video orientation %d is outside 0..3", orientation)
+	}
+	e.mu.Lock()
+	m := e.calls[callID]
+	if m == nil || m.call == nil || m.call.State() == CallPhaseEnded || !m.isVideo {
+		e.mu.Unlock()
+		return errors.New("meowcaller: call has no active video media")
+	}
+	to, creator := m.from, m.creator
+	e.mu.Unlock()
+	node := signaling.BuildVideoStateWithParams(signaling.VideoStateParams{
+		CallID: callID, To: to, CallCreator: creator, WrapperID: e.nextCallNodeID(),
+		State: signaling.VideoStateEnabled, DeviceOrientation: &orientation,
+	})
+	return e.transmitCallNode(context.Background(), node)
 }
 
 // placeCall resolves target to a LID, builds and sends the <offer>, registers the Call,
@@ -384,14 +504,10 @@ func (e *engine) reject(c *Call) error {
 		to, creator = m.from, m.creator
 	}
 	rej := signaling.BuildReject(c.id, to, creator)
-	rej.Attrs["id"] = e.c.wa.GenerateMessageID()
-	if err := e.c.wa.DangerousInternals().SendNode(context.Background(), rej); err != nil {
+	rej.Attrs["id"] = e.nextCallNodeID()
+	e.finishCall(c.id, "rejected")
+	if err := e.transmitCallNode(context.Background(), rej); err != nil {
 		return fmt.Errorf("send reject: %w", err)
-	}
-	e.stopMedia(c.id)
-	c.setPhase(CallPhaseEnded)
-	if fn := c.onEndFn(); fn != nil {
-		fn("rejected")
 	}
 	return nil
 }
@@ -404,14 +520,10 @@ func (e *engine) hangup(c *Call) error {
 		to, creator = m.from, m.creator
 	}
 	term := signaling.BuildTerminate(&signaling.TerminateParams{CallID: c.id, To: to, CallCreator: creator})
-	term.Attrs["id"] = e.c.wa.GenerateMessageID()
-	if err := e.c.wa.DangerousInternals().SendNode(context.Background(), term); err != nil {
+	term.Attrs["id"] = e.nextCallNodeID()
+	e.finishCall(c.id, "hangup")
+	if err := e.transmitCallNode(context.Background(), term); err != nil {
 		return fmt.Errorf("send terminate: %w", err)
-	}
-	e.stopMedia(c.id)
-	c.setPhase(CallPhaseEnded)
-	if fn := c.onEndFn(); fn != nil {
-		fn("hangup")
 	}
 	return nil
 }
@@ -542,13 +654,7 @@ func (e *engine) onReject(ev *events.CallReject) {
 	e.c.diag.Emit("meta", map[string]any{
 		"event": "peer_reject", "call_id": ev.CallID, "from": ev.From.String(),
 	})
-	e.stopMedia(ev.CallID)
-	if m.call != nil {
-		m.call.setPhase(CallPhaseEnded)
-		if fn := m.call.onEndFn(); fn != nil {
-			fn("rejected")
-		}
-	}
+	e.finishCall(ev.CallID, "rejected")
 }
 
 // rlProbe is one relay candidate from a relaylatency probe.
@@ -591,13 +697,7 @@ func (e *engine) onCallAck(ack *waBinary.Node) {
 			callID = en.AttrGetter().String("call-id")
 		}
 		e.c.log.Warn().Str("call_id", callID).Str("error_code", errCode).Msg("call rejected by server")
-		e.stopMedia(callID)
-		if m := e.lookup(callID); m != nil && m.call != nil {
-			m.call.setPhase(CallPhaseEnded)
-			if fn := m.call.onEndFn(); fn != nil {
-				fn("server:" + errCode)
-			}
-		}
+		e.finishCall(callID, "server:"+errCode)
 		return
 	}
 	r := findRelay(ack)
@@ -703,37 +803,46 @@ func (e *engine) onVideoStanza(v *waBinary.Node) {
 	state, _ := strconv.Atoi(ag.OptionalString("state"))
 	orientation, _ := strconv.Atoi(ag.OptionalString("device_orientation"))
 	e.c.log.Debug().Str("call_id", callID).Int("state", state).Int("orientation", orientation).Msg("inbound video state")
-	m := e.lookup(callID)
+	e.mu.Lock()
+	m := e.calls[callID]
 	if m == nil {
+		e.mu.Unlock()
 		return
 	}
-	if state == signaling.VideoStateActive || state == signaling.VideoStateUpgrade {
-		e.mu.Lock()
-		if current := e.calls[callID]; current != nil {
-			current.isVideo = true
-		}
-		e.mu.Unlock()
+	sender := m.videoTx
+	call := m.call
+	requestKeyframe := false
+	switch state {
+	case signaling.VideoStateEnabled, signaling.VideoStateUpgradeAccept:
+		m.isVideo = true
+		m.videoGate = false
+		requestKeyframe = true
+	case signaling.VideoStateDisabled, signaling.VideoStateUpgradeReject,
+		signaling.VideoStateStopped, signaling.VideoStateUpgradeCancel:
+		m.isVideo = false
+		m.videoGate = false
 	}
-	if m.call != nil {
-		if fn := m.call.onVideoStateFn(); fn != nil {
+	e.mu.Unlock()
+	if sender != nil {
+		switch state {
+		case signaling.VideoStateEnabled, signaling.VideoStateUpgradeAccept:
+			sender.enable(false)
+		case signaling.VideoStateDisabled, signaling.VideoStateUpgradeReject,
+			signaling.VideoStateStopped, signaling.VideoStateUpgradeCancel:
+			sender.disable()
+		}
+	}
+	if requestKeyframe && call != nil {
+		call.requestVideoKeyframe()
+	}
+	if call != nil {
+		if fn := call.onVideoStateFn(); fn != nil {
 			fn(VideoState{
-				Active:      state == signaling.VideoStateActive,
-				Upgrade:     state == signaling.VideoStateUpgrade,
+				Active:      state == signaling.VideoStateEnabled,
+				Upgrade:     state == signaling.VideoStateUpgradeRequest || state == signaling.VideoStateUpgradeRequestV2,
 				Orientation: orientation,
 				Raw:         state,
 			})
-		}
-	}
-	// On a mid-call video upgrade (state=11), reply with our own <video> state so the call is
-	// promoted to video server-side — the type="video" ack alone leaves the sender thinking
-	// the callee never entered video mode, so it reverts to state=0 after ~5s. NOT VALIDATED.
-	if state == signaling.VideoStateUpgrade {
-		reply := signaling.BuildVideoState(callID, m.from, m.creator, e.c.wa.GenerateMessageID(),
-			signaling.VideoStateActive, 0, signaling.VideoStateDecH264)
-		if err := e.c.wa.DangerousInternals().SendNode(context.Background(), reply); err != nil {
-			e.c.log.Warn().Err(err).Str("call_id", callID).Msg("send video accept failed")
-		} else {
-			e.c.log.Info().Str("call_id", callID).Msg("sent <video> accept (state=1) for upgrade")
 		}
 	}
 }
@@ -741,26 +850,36 @@ func (e *engine) onVideoStanza(v *waBinary.Node) {
 // onTerminate tears down a call's media and fires the Call's OnEnd listener.
 func (e *engine) onTerminate(callID, reason string) {
 	e.c.log.Info().Str("call_id", callID).Str("reason", reason).Msg("call terminated")
-	e.stopMedia(callID)
-	if m := e.lookup(callID); m != nil && m.call != nil {
-		m.call.setPhase(CallPhaseEnded)
-		if fn := m.call.onEndFn(); fn != nil {
-			fn(reason)
-		}
-	}
+	e.finishCall(callID, reason)
 }
 
-// stopMedia cancels a call's media goroutine if it's running.
-func (e *engine) stopMedia(callID string) {
+func (e *engine) finishCall(callID, reason string) {
 	if callID == "" {
 		return
 	}
 	e.mu.Lock()
-	if m := e.calls[callID]; m != nil && m.cancel != nil {
-		m.cancel()
+	m := e.calls[callID]
+	if m != nil {
+		delete(e.calls, callID)
+	}
+	var cancel context.CancelFunc
+	var call *Call
+	if m != nil {
+		cancel = m.cancel
 		m.cancel = nil
+		call = m.call
 	}
 	e.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if call == nil || call.State() == CallPhaseEnded {
+		return
+	}
+	call.setPhase(CallPhaseEnded)
+	if fn := call.onEndFn(); fn != nil {
+		fn(reason)
+	}
 }
 
 // installCallAckHook injects an "ack" entry into whatsmeow's unexported nodeHandlers map

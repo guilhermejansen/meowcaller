@@ -37,6 +37,7 @@ func TestVideoSenderStartsAtIDRAndUsesWhatsappHeaders(t *testing.T) {
 	sender := &videoSender{
 		pipe:             pipe,
 		stream:           rtp.NewVideoRtpStream(0x55667788, 4500),
+		active:           true,
 		keyframeRequired: true,
 	}
 
@@ -65,6 +66,35 @@ func TestVideoSenderStartsAtIDRAndUsesWhatsappHeaders(t *testing.T) {
 		if header.VideoExtension == nil || header.VideoExtension.MediaFrameInfo != rtp.VideoMediaFrameInfoIDR {
 			t.Fatalf("packet %d video extension = %+v", i, header.VideoExtension)
 		}
+	}
+}
+
+func TestVideoSenderGatesUpgradeUntilPeerAcceptance(t *testing.T) {
+	pipe, err := NewMediaPipeline(iota32(), "111111111111111:0@lid", "222222222222222:0@lid", 0x55667788, FrameSamples)
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	sender := &videoSender{pipe: pipe, stream: rtp.NewVideoRtpStream(0x55667788, 4500)}
+	idr := []byte{0, 0, 0, 1, 0x65, 1, 2, 3}
+	delta := []byte{0, 0, 0, 1, 0x41, 1, 2, 3}
+
+	if packets := sender.protectAccessUnit(idr, 50*time.Millisecond); len(packets) != 0 {
+		t.Fatalf("inactive sender produced %d packets", len(packets))
+	}
+	sender.enable(true)
+	if packets := sender.protectAccessUnit(idr, 50*time.Millisecond); len(packets) != 0 {
+		t.Fatalf("send-gated sender produced %d packets", len(packets))
+	}
+	sender.enable(false)
+	if packets := sender.protectAccessUnit(delta, 50*time.Millisecond); len(packets) != 0 {
+		t.Fatalf("ungated sender sent dependent frame before recovery IDR: %d packets", len(packets))
+	}
+	if packets := sender.protectAccessUnit(idr, 50*time.Millisecond); len(packets) == 0 {
+		t.Fatal("ungated sender did not send recovery IDR")
+	}
+	sender.disable()
+	if packets := sender.protectAccessUnit(idr, 50*time.Millisecond); len(packets) != 0 {
+		t.Fatalf("disabled sender produced %d packets", len(packets))
 	}
 }
 

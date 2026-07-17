@@ -1,8 +1,12 @@
 package meowcaller
 
 import (
+	"context"
+	"errors"
+	"strconv"
 	"testing"
 
+	"github.com/purpshell/meowcaller/signaling"
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -11,7 +15,7 @@ import (
 func testEngineWithOutgoingCall() (*engine, *Call) {
 	c := &Client{}
 	c.eng = newEngine(c)
-	call := &Call{id: "CID", peer: peerJID(), phase: CallPhaseCalling}
+	call := &Call{eng: c.eng, id: "CID", peer: peerJID(), phase: CallPhaseCalling}
 	c.eng.calls["CID"] = &engineCall{
 		call:      call,
 		direction: CallDirectionOutgoing,
@@ -20,6 +24,185 @@ func testEngineWithOutgoingCall() (*engine, *Call) {
 		isVideo:   true,
 	}
 	return c.eng, call
+}
+
+func videoStateNode(state int) *waBinary.Node {
+	return &waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{
+		"call-id": "CID", "state": strconv.Itoa(state),
+	}}
+}
+
+func senderVideoState(sender *videoSender) (active, gated bool) {
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	return sender.active, sender.sendGated
+}
+
+func TestCallVideoUpgradeGatesUntilPeerAcceptAndCanStop(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	m := eng.calls[call.ID()]
+	m.isVideo = false
+	m.videoTx = &videoSender{}
+	var sent []waBinary.Node
+	eng.sendCallNode = func(_ context.Context, node waBinary.Node) error {
+		sent = append(sent, node)
+		return nil
+	}
+
+	if err := call.StartVideo(); err != nil {
+		t.Fatalf("StartVideo: %v", err)
+	}
+	if len(sent) != 1 || sent[0].GetChildren()[0].AttrGetter().Int("state") != signaling.VideoStateUpgradeRequestV2 {
+		t.Fatalf("StartVideo sent %#v, want one state=11 stanza", sent)
+	}
+	if active, gated := senderVideoState(m.videoTx); !active || !gated {
+		t.Fatalf("upgrade sender state = active:%v gated:%v, want true,true", active, gated)
+	}
+
+	eng.onVideoStanza(videoStateNode(signaling.VideoStateUpgradeAccept))
+	if active, gated := senderVideoState(m.videoTx); !active || gated {
+		t.Fatalf("accepted sender state = active:%v gated:%v, want true,false", active, gated)
+	}
+
+	if err := call.StopVideo(); err != nil {
+		t.Fatalf("StopVideo: %v", err)
+	}
+	if len(sent) != 2 || sent[1].GetChildren()[0].AttrGetter().Int("state") != signaling.VideoStateStopped {
+		t.Fatalf("StopVideo sent %#v, want trailing state=6 stanza", sent)
+	}
+	if active, _ := senderVideoState(m.videoTx); active {
+		t.Fatal("video sender remained active after StopVideo")
+	}
+	if call.IsVideo() {
+		t.Fatal("call remained marked as video after StopVideo")
+	}
+}
+
+func TestCallAcceptVideoSendsAcceptThenEnabled(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	m := eng.calls[call.ID()]
+	m.isVideo = false
+	m.videoTx = &videoSender{}
+	var states []int
+	eng.sendCallNode = func(_ context.Context, node waBinary.Node) error {
+		states = append(states, node.GetChildren()[0].AttrGetter().Int("state"))
+		return nil
+	}
+
+	if err := call.AcceptVideo(); err != nil {
+		t.Fatalf("AcceptVideo: %v", err)
+	}
+	if len(states) != 2 || states[0] != signaling.VideoStateUpgradeAccept || states[1] != signaling.VideoStateEnabled {
+		t.Fatalf("AcceptVideo states = %v, want [4 1]", states)
+	}
+	if active, gated := senderVideoState(m.videoTx); !active || gated {
+		t.Fatalf("accepted sender state = active:%v gated:%v, want true,false", active, gated)
+	}
+}
+
+func TestInboundVideoStopDisablesMedia(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	m := eng.calls[call.ID()]
+	m.videoTx = &videoSender{active: true}
+	var got VideoState
+	call.OnVideoState(func(state VideoState) { got = state })
+
+	eng.onVideoStanza(videoStateNode(signaling.VideoStateStopped))
+
+	if got.Raw != signaling.VideoStateStopped {
+		t.Fatalf("video callback state = %d, want 6", got.Raw)
+	}
+	if active, _ := senderVideoState(m.videoTx); active {
+		t.Fatal("inbound stop left video sender active")
+	}
+	if call.IsVideo() {
+		t.Fatal("inbound stop left call marked as video")
+	}
+}
+
+func TestInboundVideoUpgradeWaitsForExplicitAcceptance(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	m := eng.calls[call.ID()]
+	m.isVideo = false
+	m.videoTx = &videoSender{}
+	var sent int
+	eng.sendCallNode = func(context.Context, waBinary.Node) error {
+		sent++
+		return nil
+	}
+	var got VideoState
+	call.OnVideoState(func(state VideoState) { got = state })
+
+	eng.onVideoStanza(videoStateNode(signaling.VideoStateUpgradeRequestV2))
+
+	if !got.Upgrade || got.Raw != signaling.VideoStateUpgradeRequestV2 {
+		t.Fatalf("video callback = %+v, want pending state 11", got)
+	}
+	if sent != 0 {
+		t.Fatalf("inbound upgrade auto-sent %d signaling stanzas", sent)
+	}
+	if active, _ := senderVideoState(m.videoTx); active {
+		t.Fatal("inbound upgrade activated video before explicit acceptance")
+	}
+}
+
+func TestVideoAcceptanceRequestsSourceKeyframe(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	eng.calls[call.ID()].videoTx = &videoSender{}
+	var requests int
+	call.OnVideoKeyframeRequest(func() { requests++ })
+
+	eng.onVideoStanza(videoStateNode(signaling.VideoStateUpgradeAccept))
+
+	if requests != 1 {
+		t.Fatalf("keyframe requests = %d, want 1", requests)
+	}
+}
+
+func TestCallSetsVideoOrientation(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	var sent waBinary.Node
+	eng.sendCallNode = func(_ context.Context, node waBinary.Node) error {
+		sent = node
+		return nil
+	}
+
+	if err := call.SetVideoOrientation(2); err != nil {
+		t.Fatalf("SetVideoOrientation: %v", err)
+	}
+	video := sent.GetChildren()[0].AttrGetter()
+	if video.Int("state") != signaling.VideoStateEnabled || video.Int("device_orientation") != 2 {
+		t.Fatalf("orientation stanza attrs = %#v", sent.GetChildren()[0].Attrs)
+	}
+	if err := call.SetVideoOrientation(4); err == nil {
+		t.Fatal("SetVideoOrientation accepted orientation 4")
+	}
+}
+
+func TestHangupTearsDownLocallyWhenSignalingFails(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	var canceled bool
+	eng.calls[call.ID()].cancel = func() { canceled = true }
+	eng.sendCallNode = func(context.Context, waBinary.Node) error {
+		return errors.New("network unavailable")
+	}
+	var reason string
+	call.OnEnd(func(got string) { reason = got })
+
+	err := call.Hangup()
+
+	if err == nil {
+		t.Fatal("Hangup returned nil after signaling failure")
+	}
+	if !canceled {
+		t.Fatal("Hangup did not cancel local media")
+	}
+	if call.State() != CallPhaseEnded || reason != "hangup" {
+		t.Fatalf("local end state = (%d, %q), want (Ended, hangup)", call.State(), reason)
+	}
+	if eng.lookup(call.ID()) != nil {
+		t.Fatal("Hangup retained ended call in engine registry")
+	}
 }
 
 func TestOutgoingPeerAcceptLifecycle(t *testing.T) {

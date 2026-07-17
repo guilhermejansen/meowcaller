@@ -339,6 +339,8 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	}
 	e.mu.Lock()
 	if m := e.calls[callID]; m != nil {
+		vsender.active = m.isVideo
+		vsender.sendGated = m.videoGate
 		m.videoTx = vsender
 	}
 	e.mu.Unlock()
@@ -435,6 +437,9 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 			keyframe := rtp.RtcpRequestsKeyframe(plain, videoSelfSsrc)
 			if keyframe {
 				vsender.requestKeyframe()
+				if call != nil {
+					call.requestVideoKeyframe()
+				}
 				log.Debug().Uint32("video_ssrc", videoSelfSsrc).Msg("peer requested a video keyframe")
 			}
 			e.c.diag.Emit("rtcp", map[string]any{
@@ -608,6 +613,8 @@ type videoSender struct {
 	callID           string
 	frame            uint64
 	logged           bool
+	active           bool
+	sendGated        bool
 	keyframeRequired bool
 	log              zerolog.Logger
 	diag             *diag.Recorder
@@ -653,6 +660,9 @@ func (vs *videoSender) protectAccessUnit(au []byte, duration time.Duration) [][]
 }
 
 func (vs *videoSender) protectAccessUnitLocked(au []byte, duration time.Duration) [][]byte {
+	if !vs.active || vs.sendGated {
+		return nil
+	}
 	idr := rtp.AUHasIDR(au)
 	if vs.keyframeRequired && !idr {
 		return nil
@@ -685,6 +695,23 @@ func (vs *videoSender) protectAccessUnitLocked(au []byte, duration time.Duration
 		vs.keyframeRequired = false
 	}
 	return packets
+}
+
+func (vs *videoSender) enable(sendGated bool) {
+	vs.mu.Lock()
+	needsRecovery := !vs.active || (vs.sendGated && !sendGated)
+	vs.active = true
+	vs.sendGated = sendGated
+	vs.keyframeRequired = vs.keyframeRequired || needsRecovery
+	vs.mu.Unlock()
+}
+
+func (vs *videoSender) disable() {
+	vs.mu.Lock()
+	vs.active = false
+	vs.sendGated = false
+	vs.keyframeRequired = true
+	vs.mu.Unlock()
 }
 
 func (vs *videoSender) requestKeyframe() {

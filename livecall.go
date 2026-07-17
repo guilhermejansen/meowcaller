@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/purpshell/meowcaller/signaling"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -16,19 +17,20 @@ type Call struct {
 	id   string
 	peer types.JID
 
-	mu             sync.Mutex
-	phase          CallPhase
-	player         *Player
-	sink           AudioSink
-	onReady        func()
-	onEnd          func(reason string)
-	onState        func(CallPhase)
-	onPeerAccept   func()
-	peerAccepted   bool
-	acceptNotified bool
-	onMuteState    func(muted bool)
-	videoSink      VideoSink
-	onVideoState   func(VideoState)
+	mu                     sync.Mutex
+	phase                  CallPhase
+	player                 *Player
+	sink                   AudioSink
+	onReady                func()
+	onEnd                  func(reason string)
+	onState                func(CallPhase)
+	onPeerAccept           func()
+	peerAccepted           bool
+	acceptNotified         bool
+	onMuteState            func(muted bool)
+	videoSink              VideoSink
+	onVideoState           func(VideoState)
+	onVideoKeyframeRequest func()
 }
 
 // ID returns the call-id (32 uppercase hex chars).
@@ -47,10 +49,7 @@ func (c *Call) State() CallPhase {
 // IsVideo reports whether the inbound offer advertised video. Attach a VideoSink with
 // ReceiveVideo to receive the peer's H.264.
 func (c *Call) IsVideo() bool {
-	if m := c.eng.lookup(c.id); m != nil {
-		return m.isVideo
-	}
-	return false
+	return c.eng.callIsVideo(c.id)
 }
 
 // Answer accepts an inbound call (preaccept + accept) and brings media up. No-op error
@@ -62,6 +61,27 @@ func (c *Call) Reject() error { return c.eng.reject(c) }
 
 // Hangup ends the call (either direction) and tears down media.
 func (c *Call) Hangup() error { return c.eng.hangup(c) }
+
+// StartVideo requests an audio-to-video upgrade. Outbound video remains gated until
+// the peer acknowledges the transition with state 4 or state 1.
+func (c *Call) StartVideo() error {
+	return c.eng.transitionVideo(c.id, signaling.VideoStateUpgradeRequestV2)
+}
+
+// AcceptVideo accepts a peer's video upgrade with state 4 followed by state 1.
+func (c *Call) AcceptVideo() error {
+	return c.eng.transitionVideo(c.id, signaling.VideoStateUpgradeAccept)
+}
+
+// StopVideo downgrades the call to audio while preserving the call and audio media.
+func (c *Call) StopVideo() error {
+	return c.eng.transitionVideo(c.id, signaling.VideoStateStopped)
+}
+
+// SetVideoOrientation announces the local camera rotation as quarter turns clockwise.
+func (c *Call) SetVideoOrientation(orientation int) error {
+	return c.eng.setVideoOrientation(c.id, orientation)
+}
 
 // Subscribe attaches p as the call's outbound audio player, replacing any previous one.
 // While the player is Playing, its source frames are encoded and sent to the peer;
@@ -114,6 +134,23 @@ func (c *Call) OnVideoState(fn func(VideoState)) {
 	c.mu.Lock()
 	c.onVideoState = fn
 	c.mu.Unlock()
+}
+
+// OnVideoKeyframeRequest registers a callback for authenticated WhatsApp PLI/FIR
+// feedback. Encoded video sources should make their next access unit an IDR.
+func (c *Call) OnVideoKeyframeRequest(fn func()) {
+	c.mu.Lock()
+	c.onVideoKeyframeRequest = fn
+	c.mu.Unlock()
+}
+
+func (c *Call) requestVideoKeyframe() {
+	c.mu.Lock()
+	fn := c.onVideoKeyframeRequest
+	c.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 // onVideoStateFn returns the Call's video-state callback under its lock.
