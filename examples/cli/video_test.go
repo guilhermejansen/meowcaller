@@ -53,3 +53,19 @@ func TestVideoBridgeControlRejectsUnknownAction(t *testing.T) {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 }
+
+func TestVideoBridgeServesCurrentPairingQR(t *testing.T) {
+	vb := &videoBridge{}
+	vb.setQRCodePNG([]byte("png-bytes"))
+	req := httptest.NewRequest(http.MethodGet, "/qr.png", nil)
+	rec := httptest.NewRecorder()
+
+	vb.handleQRCode(rec, req)
+
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("QR response = (%d, %q)", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if rec.Body.String() != "png-bytes" {
+		t.Fatalf("QR body = %q", rec.Body.String())
+	}
+}

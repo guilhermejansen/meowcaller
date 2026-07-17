@@ -331,20 +331,20 @@ func openClient(ctx context.Context) (*whatsmeow.Client, error) {
 	return client, nil
 }
 
-func connectManagedClient(ctx context.Context, rec *diag.Recorder) (*whatsmeow.Client, *meowcaller.Client, error) {
+func connectManagedClient(ctx context.Context, rec *diag.Recorder, onQR ...func(string, time.Duration)) (*whatsmeow.Client, *meowcaller.Client, error) {
 	wa, err := openClient(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 	client := meowcaller.NewClient(wa, meowcaller.WithLogger(*zerolog.Ctx(ctx)), meowcaller.WithDiagnostics(rec))
-	if err = connectClient(ctx, wa); err != nil {
+	if err = connectClient(ctx, wa, onQR...); err != nil {
 		return nil, nil, err
 	}
 	return wa, client, nil
 }
 
 // connectClient logs in a preconfigured client (QR on first run).
-func connectClient(ctx context.Context, client *whatsmeow.Client) error {
+func connectClient(ctx context.Context, client *whatsmeow.Client, onQR ...func(string, time.Duration)) error {
 	log := zerolog.Ctx(ctx)
 	if client.Store.ID == nil {
 		qr, _ := client.GetQRChannel(ctx)
@@ -353,7 +353,12 @@ func connectClient(ctx context.Context, client *whatsmeow.Client) error {
 		}
 		for evt := range qr {
 			if evt.Event == "code" {
-				log.Info().Int("valid_s", int(evt.Timeout.Seconds())).Str("qr_code", evt.Code).Msg("scan in WhatsApp > Linked devices")
+				log.Info().Int("valid_s", int(evt.Timeout.Seconds())).Msg("scan in WhatsApp > Linked devices")
+				for _, fn := range onQR {
+					if fn != nil {
+						fn(evt.Code, evt.Timeout)
+					}
+				}
 			} else {
 				log.Info().Str("event", evt.Event).Msg("login event")
 			}

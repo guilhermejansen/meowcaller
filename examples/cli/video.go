@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/rs/zerolog"
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 // videoBridge is an ephemeral, localhost-only HTTP server that pipes a call's H.264 video
@@ -30,6 +31,8 @@ type videoBridge struct {
 	onFrame     func([]byte)
 	onControl   func(vbControl) error
 	orientation int
+	qrPNG       []byte
+	state       []byte
 	closed      bool
 }
 
@@ -58,6 +61,7 @@ func newVideoBridge(log zerolog.Logger) (*videoBridge, error) {
 	mux.HandleFunc("/in", vb.handleIn)
 	mux.HandleFunc("/out", vb.handleOut)
 	mux.HandleFunc("/control", vb.handleControl)
+	mux.HandleFunc("/qr.png", vb.handleQRCode)
 	vb.srv = &http.Server{Handler: mux}
 	go func() {
 		if err := vb.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -120,12 +124,30 @@ func (vb *videoBridge) OnControl(fn func(vbControl) error) {
 func (vb *videoBridge) PublishState(state any) {
 	data, err := json.Marshal(state)
 	if err == nil {
+		vb.mu.Lock()
+		vb.state = append(vb.state[:0], data...)
+		vb.mu.Unlock()
 		vb.broadcast(vbMsg{event: "state", data: data})
 	}
 }
 
 func (vb *videoBridge) RequestKeyframe() {
 	vb.broadcast(vbMsg{event: "keyframe", data: []byte("1")})
+}
+
+func (vb *videoBridge) SetQRCode(code string) error {
+	png, err := qrcode.Encode(code, qrcode.Medium, 320)
+	if err != nil {
+		return err
+	}
+	vb.setQRCodePNG(png)
+	return nil
+}
+
+func (vb *videoBridge) setQRCodePNG(png []byte) {
+	vb.mu.Lock()
+	vb.qrPNG = append(vb.qrPNG[:0], png...)
+	vb.mu.Unlock()
 }
 
 // Close stops the server and releases page subscriptions.
@@ -158,6 +180,7 @@ func (vb *videoBridge) handleIn(w http.ResponseWriter, r *http.Request) {
 	}
 	vb.subs[ch] = struct{}{}
 	orient := vb.orientation
+	state := append([]byte(nil), vb.state...)
 	vb.mu.Unlock()
 	defer func() {
 		vb.mu.Lock()
@@ -171,6 +194,9 @@ func (vb *videoBridge) handleIn(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	fmt.Fprintf(w, "event: orient\ndata: %d\n\n", orient) // send current orientation up front
+	if len(state) > 0 {
+		fmt.Fprintf(w, "event: state\ndata: %s\n\n", state)
+	}
 	flusher.Flush()
 	for {
 		select {
@@ -244,6 +270,23 @@ func (vb *videoBridge) handleControl(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (vb *videoBridge) handleQRCode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	vb.mu.Lock()
+	png := append([]byte(nil), vb.qrPNG...)
+	vb.mu.Unlock()
+	if len(png) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(png)
+}
+
 func (vb *videoBridge) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -267,10 +310,12 @@ input{padding:0 11px;min-width:0}button{padding:0 13px;cursor:pointer;white-spac
 .pane{min-width:0}.pane-head{height:42px;color:var(--muted);font-size:12px;text-transform:uppercase;display:flex;align-items:center;justify-content:space-between}.pane-head button{height:32px}
 canvas,video{display:block;width:100%;aspect-ratio:4/3;object-fit:contain;background:#050607;border:1px solid var(--line);border-radius:6px}#remote{transition:transform .2s}
 #log{height:150px;overflow:auto;margin-top:12px;padding:10px;border:1px solid var(--line);background:#0b0d0e;color:#b8d8c8;font:12px ui-monospace,monospace;white-space:pre-wrap}
-@media(max-width:760px){header{padding:0 12px}.toolbar{grid-template-columns:1fr 1fr}.toolbar input{grid-column:1/-1}.media{grid-template-columns:1fr}.actions{flex-wrap:wrap}button{flex:1 0 auto}}
+.pairing{display:flex;align-items:center;gap:18px;padding:12px 0 16px;border-bottom:1px solid var(--line);margin-bottom:14px}.pairing[hidden]{display:none}.pairing img{width:180px;height:180px;background:#fff;border-radius:6px}.pairing strong{display:block;margin-bottom:5px}.pairing span{color:var(--muted)}
+@media(max-width:760px){header{padding:0 12px}.toolbar{grid-template-columns:1fr 1fr}.toolbar input{grid-column:1/-1}.media{grid-template-columns:1fr}.actions{flex-wrap:wrap}.actions button,.toolbar button{flex:1 0 auto}}
 </style></head><body>
 <header><h1>meowcaller call console</h1><div id="state" class="state">idle</div></header>
 <main>
+  <section id="pairing" class="pairing" hidden><img id="qr" alt="WhatsApp linked-device QR"><div><strong>Link WhatsApp</strong><span>WhatsApp > Linked devices > Link a device</span></div></section>
   <div class="toolbar"><input id="target" inputmode="tel" placeholder="WhatsApp number or LID"><button id="dialAudio">Dial audio</button><button id="dialVideo" class="primary">Dial video</button></div>
   <div class="actions"><button id="answer">Answer</button><button id="reject">Reject</button><button id="startVideo">Upgrade to video</button><button id="acceptVideo">Accept video</button><button id="stopVideo">Stop video</button><button id="hangup" class="danger">Hang up</button></div>
   <div class="media">
@@ -291,7 +336,7 @@ function keyNAL(d){for(let i=0;i+4<d.length;i++){let p=-1;if(d[i]===0&&d[i+1]===
 function getDecoder(){if(decoder&&decoder.state!=='closed')return decoder;decoder=new VideoDecoder({output:f=>{remote.width=f.displayWidth;remote.height=f.displayHeight;paint.drawImage(f,0,0);f.close();$('remoteMeta').textContent=remote.width+'x'+remote.height},error:e=>log('decoder',e.message)});decoder.configure({codec:'avc1.42E01F',optimizeForLatency:true});return decoder}
 es.onmessage=e=>{const au=Uint8Array.from(atob(e.data),c=>c.charCodeAt(0)),key=keyNAL(au);if(!decodeStarted&&!key)return;decodeStarted=true;try{getDecoder().decode(new EncodedVideoChunk({type:key?'key':'delta',timestamp:performance.now()*1000,data:au}))}catch(err){log('decode',err.message);decodeStarted=false}};
 es.addEventListener('orient',e=>{remote.style.transform='rotate('+(+e.data*90)+'deg)'});es.addEventListener('keyframe',()=>{forceKeyframe=true;log('peer requested keyframe')});
-es.addEventListener('state',e=>{const s=JSON.parse(e.data);$('state').textContent=s.event+(s.peer?' / '+s.peer:'');log(new Date().toLocaleTimeString(),JSON.stringify(s))});es.onerror=()=>log('event stream disconnected');
+es.addEventListener('state',e=>{const s=JSON.parse(e.data);$('state').textContent=s.event+(s.peer?' / '+s.peer:'');if(s.event==='pairing'){$('pairing').hidden=false;$('qr').src='/qr.png?t='+Date.now()}else if(s.event==='idle')$('pairing').hidden=true;log(new Date().toLocaleTimeString(),JSON.stringify(s))});es.onerror=()=>log('event stream disconnected');
 let stream=null,encoder=null,reader=null,upload=Promise.resolve();
 async function stopCamera(){if(reader)await reader.cancel().catch(()=>{});if(encoder&&encoder.state!=='closed')encoder.close();if(stream)stream.getTracks().forEach(t=>t.stop());stream=encoder=reader=null;$('local').srcObject=null;$('cam').textContent='Start camera'}
 $('cam').onclick=async()=>{if(stream){await stopCamera();return}try{stream=await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,frameRate:{ideal:15,max:15}}});$('local').srcObject=stream;$('cam').textContent='Stop camera';const track=stream.getVideoTracks()[0];encoder=new VideoEncoder({output:chunk=>{const b=new Uint8Array(chunk.byteLength);chunk.copyTo(b);upload=upload.then(()=>fetch('/out',{method:'POST',body:b})).then(r=>{if(!r.ok)throw Error('video upload '+r.status)}).catch(e=>log(e.message))},error:e=>log('encoder',e.message)});encoder.configure({codec:'avc1.42E01F',avc:{format:'annexb'},width:640,height:480,framerate:15,bitrate:500000,latencyMode:'realtime'});reader=new MediaStreamTrackProcessor({track}).readable.getReader();let n=0;for(;;){const{value:f,done}=await reader.read();if(done)break;if(encoder.encodeQueueSize<2){const key=forceKeyframe||n%15===0;forceKeyframe=false;encoder.encode(f,{keyFrame:key});n++}f.close()}}catch(e){log('camera',e.message);await stopCamera()}};

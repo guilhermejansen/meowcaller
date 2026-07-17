@@ -240,7 +240,13 @@ func runWebConsole(ctx context.Context, rec *diag.Recorder) error {
 	}
 	defer bridge.Close()
 	zerolog.Ctx(ctx).Info().Str("url", bridge.URL()).Msg("web call console ready")
-	wa, client, err := connectManagedClient(ctx, rec)
+	wa, client, err := connectManagedClient(ctx, rec, func(code string, validFor time.Duration) {
+		if err := bridge.SetQRCode(code); err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Msg("failed to render pairing QR")
+			return
+		}
+		bridge.PublishState(webCallState{Event: "pairing", Message: validFor.Round(time.Second).String()})
+	})
 	if err != nil {
 		return err
 	}
