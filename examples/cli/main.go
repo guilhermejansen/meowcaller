@@ -311,7 +311,7 @@ func openFileSource(file string) (meowcaller.AudioSource, error) {
 
 // openClient opens whatsmeow's auth store without connecting. This lets callers install
 // meowcaller's raw call handlers before the network receive loop starts.
-func openClient(ctx context.Context) (*whatsmeow.Client, error) {
+func openClient(ctx context.Context, verboseWhatsmeow bool) (*whatsmeow.Client, error) {
 	// Present as a Google Chrome web client. The connection already advertises the
 	// WEB platform; these companion props make the linked-device entry read
 	// "Google Chrome (Mac OS)" instead of the default. DeviceProps is read at
@@ -319,7 +319,11 @@ func openClient(ctx context.Context) (*whatsmeow.Client, error) {
 	store.DeviceProps.Os = proto.String("Mac OS")
 	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_CHROME.Enum()
 
-	container, err := sqlstore.New(ctx, "sqlite", "file:wa-voip.db?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", waLog.Zerolog(*zerolog.Ctx(ctx)).Sub("db"))
+	waLogger := *zerolog.Ctx(ctx)
+	if !verboseWhatsmeow {
+		waLogger = waLogger.Level(zerolog.InfoLevel)
+	}
+	container, err := sqlstore.New(ctx, "sqlite", "file:wa-voip.db?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", waLog.Zerolog(waLogger).Sub("db"))
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
@@ -327,12 +331,12 @@ func openClient(ctx context.Context) (*whatsmeow.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load device: %w", err)
 	}
-	client := whatsmeow.NewClient(device, waLog.Zerolog(*zerolog.Ctx(ctx)).Sub("wa"))
+	client := whatsmeow.NewClient(device, waLog.Zerolog(waLogger).Sub("wa"))
 	return client, nil
 }
 
 func connectManagedClient(ctx context.Context, rec *diag.Recorder, onQR ...func(string, time.Duration)) (*whatsmeow.Client, *meowcaller.Client, error) {
-	wa, err := openClient(ctx)
+	wa, err := openClient(ctx, rec != nil)
 	if err != nil {
 		return nil, nil, err
 	}
