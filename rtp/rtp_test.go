@@ -140,6 +140,26 @@ func TestVideoStreamUsesOneTimestampPerAccessUnit(t *testing.T) {
 	}
 }
 
+func TestVideoRtpExtensionDisplayOrientation(t *testing.T) {
+	tests := []struct {
+		frameInfo uint8
+		want      int
+	}{
+		{frameInfo: 0x20, want: 0},
+		{frameInfo: 0x21, want: 3},
+		{frameInfo: 0x22, want: 2},
+		{frameInfo: 0x23, want: 1},
+		{frameInfo: 0x33, want: 1},
+		{frameInfo: 0x0b, want: 1},
+	}
+	for _, test := range tests {
+		extension := VideoRtpExtension{MediaFrameInfo: test.frameInfo}
+		if got := extension.DisplayOrientation(); got != test.want {
+			t.Errorf("frame info %#02x orientation = %d, want %d", test.frameInfo, got, test.want)
+		}
+	}
+}
+
 func TestVideoStreamMatchesCapturedWebFrameMetadata(t *testing.T) {
 	stream := NewVideoRtpStream(0x11223344, 4500)
 	first := EncodeRtpHeader(ptrRtpHeader(stream.NextPacket(false, 0x08)))

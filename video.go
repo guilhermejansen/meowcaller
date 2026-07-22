@@ -23,6 +23,12 @@ type VideoSink interface {
 	Close() error
 }
 
+// VideoOrientationSink receives display orientation discovered in RTP frame metadata.
+// The value is clockwise quarter turns suitable for rendering the decoded frame upright.
+type VideoOrientationSink interface {
+	SetOrientation(orientation int)
+}
+
 // VideoSinkFunc adapts a plain function to a VideoSink (Close is a no-op).
 type VideoSinkFunc func(accessUnit []byte)
 

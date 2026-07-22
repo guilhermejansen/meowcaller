@@ -389,6 +389,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	var videoAU []byte
 	var appDataRx appDataReceiver
 	var videoWirePacket, videoWireFrame uint64
+	videoOrientation := -1
 
 	// Video send: a second WARP pipeline on our video SSRC, registered on the call so
 	// Call.SendVideoFrame can push encoded H.264 to the relay. Cleared when the loop exits.
@@ -634,6 +635,23 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 				continue
 			}
 			videoReception.Observe(vh.Ssrc, vh.SequenceNumber, vh.Timestamp, uint64(time.Now().UnixMilli()), 90000)
+			if vh.VideoExtension != nil {
+				orientation := vh.VideoExtension.DisplayOrientation()
+				if orientation != videoOrientation {
+					videoOrientation = orientation
+					if sink, ok := callVideoSink(call).(VideoOrientationSink); ok {
+						sink.SetOrientation(orientation)
+					}
+					log.Debug().
+						Int("orientation", orientation).
+						Uint8("media_frame_info", vh.VideoExtension.MediaFrameInfo).
+						Msg("updated peer video orientation from RTP")
+					e.c.diag.Emit("video", map[string]any{
+						"event": "orientation", "orientation": orientation,
+						"media_frame_info": vh.VideoExtension.MediaFrameInfo,
+					})
+				}
+			}
 			if videoWirePacket < videoWirePacketLimit {
 				headerLen, _ := rtp.RtpHeaderByteLength(pkt)
 				_, extension, _ := rtp.RtpExtensionProfileAndData(pkt)
