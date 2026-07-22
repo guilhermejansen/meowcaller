@@ -60,8 +60,12 @@ func TestVideoSenderStartsAtIDRAndUsesWhatsappHeaders(t *testing.T) {
 		if !ok {
 			t.Fatalf("packet %d has no RTP header", i)
 		}
-		if n, ok := rtp.RtpHeaderByteLength(packet); !ok || n != rtp.WhatsappVideoRtpHeaderSize {
-			t.Fatalf("packet %d header length = (%d, %v), want (%d, true)", i, n, ok, rtp.WhatsappVideoRtpHeaderSize)
+		wantHeaderSize := rtp.WhatsappVideoRtpHeaderSize
+		if i == 0 {
+			wantHeaderSize += 4
+		}
+		if n, ok := rtp.RtpHeaderByteLength(packet); !ok || n != wantHeaderSize {
+			t.Fatalf("packet %d header length = (%d, %v), want (%d, true)", i, n, ok, wantHeaderSize)
 		}
 		if header.VideoExtension == nil || header.VideoExtension.MediaFrameInfo != rtp.VideoMediaFrameInfoIDR {
 			t.Fatalf("packet %d video extension = %+v", i, header.VideoExtension)

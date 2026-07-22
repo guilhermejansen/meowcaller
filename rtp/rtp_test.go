@@ -94,7 +94,7 @@ func TestVideoHeaderMatchesAndroidCapture(t *testing.T) {
 		Timestamp:      114120,
 		Ssrc:           0x49c5fb8c,
 		VideoExtension: &VideoRtpExtension{
-			MediaFrameInfo:    VideoMediaFrameInfoIDR,
+			MediaFrameInfo:    0x09,
 			InitialBandwidth:  0,
 			ShortOffset:       29,
 			TransportSequence: 0x0c3f,
@@ -137,6 +137,40 @@ func TestVideoStreamUsesOneTimestampPerAccessUnit(t *testing.T) {
 	if stream.RtpTimestamp() != 4500 {
 		t.Errorf("last RTP timestamp = %d, want 4500", stream.RtpTimestamp())
 	}
+}
+
+func TestVideoStreamMatchesCapturedWebFrameMetadata(t *testing.T) {
+	stream := NewVideoRtpStream(0x11223344, 4500)
+	first := EncodeRtpHeader(ptrRtpHeader(stream.NextPacket(false, 0x08)))
+	second := EncodeRtpHeader(ptrRtpHeader(stream.NextPacket(true, 0x08)))
+	third := EncodeRtpHeader(ptrRtpHeader(stream.NextPacket(true, 0x20)))
+
+	_, firstExtension, ok := RtpExtensionProfileAndData(first)
+	if !ok {
+		t.Fatal("first packet has no RTP extension")
+	}
+	_, secondExtension, ok := RtpExtensionProfileAndData(second)
+	if !ok {
+		t.Fatal("second packet has no RTP extension")
+	}
+	_, thirdExtension, ok := RtpExtensionProfileAndData(third)
+	if !ok {
+		t.Fatal("third packet has no RTP extension")
+	}
+
+	if got, want := hex.EncodeToString(firstExtension), "32080001510000610000910000000000"; got != want {
+		t.Errorf("first extension = %s, want %s", got, want)
+	}
+	if got, want := hex.EncodeToString(secondExtension), "300851000061000091000100"; got != want {
+		t.Errorf("second extension = %s, want %s", got, want)
+	}
+	if got, want := hex.EncodeToString(thirdExtension), "32200002510000610000910002000000"; got != want {
+		t.Errorf("third extension = %s, want %s", got, want)
+	}
+}
+
+func ptrRtpHeader(header RtpHeader) *RtpHeader {
+	return &header
 }
 
 // TestEstimateWireBytesMatchKAT checks the on-wire size estimator for speech/DTX/priming.
