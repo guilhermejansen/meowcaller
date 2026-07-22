@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "meowcaller diagnostics",
+  "version": "1.0.0",
+  "description": "Minimal WhatsApp Web call diagnostics",
+  "host_permissions": ["http://127.0.0.1:3219/*"],
+  "background": { "service_worker": "sender.js" },
+  "content_scripts": [{
+    "matches": ["https://web.whatsapp.com/*"],
+    "js": ["relay.js"],
+    "run_at": "document_start"
+  }],
+  "web_accessible_resources": [{
+    "resources": ["hooks.js"],
+    "matches": ["https://web.whatsapp.com/*"]
+  }]
+}
